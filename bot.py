@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 LOG_PAPKA = "foydalanuvchi_xabarlari"
 os.makedirs(LOG_PAPKA, exist_ok=True)
 
+# Admin guruh ID (Railway Variables da o'rnatilgan)
+LOG_CHAT_ID = os.getenv("LOG_CHAT_ID")
+
 MAX_MEDIA = 20 * 1024 * 1024   # 20 MB
 
 # Tugma yozuvlari
@@ -59,6 +62,52 @@ def chiroyli_log(user_str, tur, matn=""):
         print(f"💬 Matn: {matn}")
     print(chiziq)
 
+async def guruhga_yubor(context, user_str, tur, matn="", fayl_path=None):
+    """Foydalanuvchi xabarini admin guruhga yuborish"""
+    if not LOG_CHAT_ID:
+        return  # ID o'rnatilmagan bo'lsa, o'tkazib yuboramiz
+
+    try:
+        # Chiroyli matn tayyorlash
+        caption = f"👤 {user_str}\n📨 {tur}"
+        if matn:
+            # Uzun matnni qisqartirish (Telegram limiti)
+            qisqa = matn[:800] + "..." if len(matn) > 800 else matn
+            caption += f"\n💬 {qisqa}"
+
+        # Fayl bilan yuborish (rasm, ovoz, video)
+        if fayl_path and os.path.exists(fayl_path):
+            with open(fayl_path, "rb") as f:
+                if fayl_path.endswith((".jpg", ".jpeg", ".png")):
+                    await context.bot.send_photo(LOG_CHAT_ID, photo=f, caption=caption)
+                elif fayl_path.endswith(".ogg"):
+                    await context.bot.send_voice(LOG_CHAT_ID, voice=f, caption=caption)
+                elif fayl_path.endswith((".mp4", ".mov")):
+                    await context.bot.send_video(LOG_CHAT_ID, video=f, caption=caption)
+                elif fayl_path.endswith(".mp3"):
+                    await context.bot.send_audio(LOG_CHAT_ID, audio=f, caption=caption)
+                else:
+                    await context.bot.send_document(LOG_CHAT_ID, document=f, caption=caption)
+        else:
+            # Faqat matn
+            await context.bot.send_message(LOG_CHAT_ID, caption)
+    except Exception as e:
+        print(f"(Guruhga yuborishda xato: {e})")
+
+
+async def ai_javobini_yubor(context, javob):
+    """AI javobini guruhga alohida yuborish"""
+    if not LOG_CHAT_ID:
+        return
+    try:
+        matn = f"🤖 AI javobi:\n{javob}"
+        # Telegram xabar limiti - 4096 ta harf
+        if len(matn) > 4000:
+            matn = matn[:4000] + "\n...(qisqartirildi)"
+        await context.bot.send_message(LOG_CHAT_ID, matn)
+    except Exception as e:
+        print(f"(AI javobini yuborishda xato: {e})")
+
 def yangi_fayl_nomi(user_id, kengaytma):
     vaqt = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{LOG_PAPKA}/{user_id}_{vaqt}.{kengaytma}"
@@ -72,9 +121,9 @@ def manzilni_aniqla(lat, lon):
     return ", ".join(manzil.split(",")[:4]) if manzil else ""
 
 async def media_ishla(update, context, fayl_id, kengaytma, tur, izoh=""):
-    """Barcha media turlari uchun umumiy funksiya"""
     user_id = update.effective_user.id
-    await context.bot.send_chat_action(update.effective_chat.id, action="typing")
+    user_str = user_info(update)
+    await xavfsiz_typing(context, update.effective_chat.id)
     path = None
     try:
         fayl = await context.bot.get_file(fayl_id)
@@ -82,13 +131,19 @@ async def media_ishla(update, context, fayl_id, kengaytma, tur, izoh=""):
         await fayl.download_to_drive(path)
         print(f"💾 Saqlandi: {path}")
 
+        # 📨 Faylni guruhga yuborish
+        tur_emoji = {"rasm": "📸 RASM", "ovoz": "🎤 OVOZ", "video": "🎬 VIDEO"}
+        await guruhga_yubor(context, user_str, tur_emoji.get(tur, tur), izoh, path)
+
         javob = media_javob(user_id, path, izoh, tur)
         print(f"🤖 AI javobi:\n{javob}\n")
         await update.message.reply_text(javob)
+
+        # 🤖 AI javobini ham guruhga yuborish
+        await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.error(f"{tur} xatosi: {e}")
         await update.message.reply_text(f"⚠️ Xatolik: {str(e)[:200]}")
-
 # ═══════════════════════════════════════
 # BUYRUQLAR
 # ═══════════════════════════════════════
@@ -191,23 +246,29 @@ async def yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matn = update.message.text
 
-    # Tugmalarni tekshirish
     if matn == BTN_YORDAM:
         return await yordam(update, context)
     if matn == BTN_YANGI:
         return await yangi(update, context)
 
     user_id = update.effective_user.id
-    chiroyli_log(user_info(update), "✍️ MATN", matn)
-    await context.bot.send_chat_action(update.effective_chat.id, action="typing")
+    user_str = user_info(update)
+    chiroyli_log(user_str, "✍️ MATN", matn)
+
+    # 📨 Guruhga yuborish
+    await guruhga_yubor(context, user_str, "✍️ MATN", matn)
+
+    await xavfsiz_typing(context, update.effective_chat.id)
     try:
         javob = matn_javob(user_id, matn)
         print(f"🤖 AI javobi:\n{javob}\n")
         await update.message.reply_text(javob)
+
+        # 🤖 AI javobini ham guruhga yuborish
+        await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.error(f"Matn xatosi: {e}")
         await update.message.reply_text(f"⚠️ Xatolik: {str(e)[:200]}")
-
 async def rasm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     izoh = update.message.caption or ""
     chiroyli_log(user_info(update), "📸 RASM", izoh)
@@ -272,6 +333,11 @@ async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loc = update.message.location
     chiroyli_log(user_info(update), "📍 JOYLASHUV", f"{loc.latitude}, {loc.longitude}")
     await update.message.reply_text("📍 Manzilni aniqlayapman...")
+    # 📨 Guruhga xabar
+    await guruhga_yubor(
+        context, user_info(update), "📍 JOYLASHUV",
+        f"Lat: {loc.latitude}, Lon: {loc.longitude}"
+    )
     try:
         manzil = manzilni_aniqla(loc.latitude, loc.longitude)
         if not manzil:
