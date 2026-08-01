@@ -29,15 +29,13 @@ os.makedirs(LOG_PAPKA, exist_ok=True)
 # Admin guruh ID (Railway Variables da o'rnatilgan)
 LOG_CHAT_ID = os.getenv("LOG_CHAT_ID")
 
-MAX_MEDIA = 20 * 1024 * 1024   # 20 MB
+MAX_MEDIA = 20 * 1024 * 1024
 
-# Tugma yozuvlari
 BTN_YORDAM = "❓ Qanday ishlataman?"
 BTN_YANGI = "🔄 Yangi muammo"
 BTN_JOY = "📍 Joylashuvni yuborish"
 
 def klaviatura():
-    """Pastdagi doimiy tugmalar"""
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(BTN_JOY, request_location=True)],
@@ -45,10 +43,6 @@ def klaviatura():
         ],
         resize_keyboard=True
     )
-
-# ═══════════════════════════════════════
-# YORDAMCHI FUNKSIYALAR
-# ═══════════════════════════════════════
 
 def user_info(update):
     u = update.effective_user
@@ -62,20 +56,34 @@ def chiroyli_log(user_str, tur, matn=""):
         print(f"💬 Matn: {matn}")
     print(chiziq)
 
+def yangi_fayl_nomi(user_id, kengaytma):
+    vaqt = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{LOG_PAPKA}/{user_id}_{vaqt}.{kengaytma}"
+
+def manzilni_aniqla(lat, lon):
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {"format": "json", "lat": lat, "lon": lon, "accept-language": "uz,ru,en"}
+    headers = {"User-Agent": "AIUstaBot/1.0"}
+    data = requests.get(url, params=params, headers=headers, timeout=10).json()
+    manzil = data.get("display_name", "")
+    return ", ".join(manzil.split(",")[:4]) if manzil else ""
+
+async def xavfsiz_typing(context, chat_id):
+    try:
+        await context.bot.send_chat_action(chat_id, action="typing")
+    except Exception as e:
+        print(f"(typing belgisi yuborilmadi: {e})")
+
 async def guruhga_yubor(context, user_str, tur, matn="", fayl_path=None):
     """Foydalanuvchi xabarini admin guruhga yuborish"""
     if not LOG_CHAT_ID:
-        return  # ID o'rnatilmagan bo'lsa, o'tkazib yuboramiz
-
+        return
     try:
-        # Chiroyli matn tayyorlash
         caption = f"👤 {user_str}\n📨 {tur}"
         if matn:
-            # Uzun matnni qisqartirish (Telegram limiti)
             qisqa = matn[:800] + "..." if len(matn) > 800 else matn
             caption += f"\n💬 {qisqa}"
 
-        # Fayl bilan yuborish (rasm, ovoz, video)
         if fayl_path and os.path.exists(fayl_path):
             with open(fayl_path, "rb") as f:
                 if fayl_path.endswith((".jpg", ".jpeg", ".png")):
@@ -89,36 +97,21 @@ async def guruhga_yubor(context, user_str, tur, matn="", fayl_path=None):
                 else:
                     await context.bot.send_document(LOG_CHAT_ID, document=f, caption=caption)
         else:
-            # Faqat matn
             await context.bot.send_message(LOG_CHAT_ID, caption)
     except Exception as e:
         print(f"(Guruhga yuborishda xato: {e})")
 
-
 async def ai_javobini_yubor(context, javob):
-    """AI javobini guruhga alohida yuborish"""
+    """AI javobini admin guruhga yuborish"""
     if not LOG_CHAT_ID:
         return
     try:
         matn = f"🤖 AI javobi:\n{javob}"
-        # Telegram xabar limiti - 4096 ta harf
         if len(matn) > 4000:
             matn = matn[:4000] + "\n...(qisqartirildi)"
         await context.bot.send_message(LOG_CHAT_ID, matn)
     except Exception as e:
         print(f"(AI javobini yuborishda xato: {e})")
-
-def yangi_fayl_nomi(user_id, kengaytma):
-    vaqt = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{LOG_PAPKA}/{user_id}_{vaqt}.{kengaytma}"
-
-def manzilni_aniqla(lat, lon):
-    url = "https://nominatim.openstreetmap.org/reverse"
-    params = {"format": "json", "lat": lat, "lon": lon, "accept-language": "uz,ru,en"}
-    headers = {"User-Agent": "AIUstaBot/1.0"}
-    data = requests.get(url, params=params, headers=headers, timeout=10).json()
-    manzil = data.get("display_name", "")
-    return ", ".join(manzil.split(",")[:4]) if manzil else ""
 
 async def media_ishla(update, context, fayl_id, kengaytma, tur, izoh=""):
     user_id = update.effective_user.id
@@ -131,7 +124,6 @@ async def media_ishla(update, context, fayl_id, kengaytma, tur, izoh=""):
         await fayl.download_to_drive(path)
         print(f"💾 Saqlandi: {path}")
 
-        # 📨 Faylni guruhga yuborish
         tur_emoji = {"rasm": "📸 RASM", "ovoz": "🎤 OVOZ", "video": "🎬 VIDEO"}
         await guruhga_yubor(context, user_str, tur_emoji.get(tur, tur), izoh, path)
 
@@ -139,13 +131,13 @@ async def media_ishla(update, context, fayl_id, kengaytma, tur, izoh=""):
         print(f"🤖 AI javobi:\n{javob}\n")
         await update.message.reply_text(javob)
 
-        # 🤖 AI javobini ham guruhga yuborish
         await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.error(f"{tur} xatosi: {e}")
         await update.message.reply_text(f"⚠️ Xatolik: {str(e)[:200]}")
+
 # ═══════════════════════════════════════
-# BUYRUQLAR
+# MATNLAR
 # ═══════════════════════════════════════
 
 SALOM = """
@@ -220,6 +212,10 @@ Yuborsangiz — yaqin ustaxona va narxlarni topaman.
 albatta rozetkadan uzing!
 """
 
+# ═══════════════════════════════════════
+# BUYRUQLAR
+# ═══════════════════════════════════════
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chiroyli_log(user_info(update), "🚀 START")
     await update.message.reply_text(
@@ -254,8 +250,6 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_str = user_info(update)
     chiroyli_log(user_str, "✍️ MATN", matn)
-
-    # 📨 Guruhga yuborish
     await guruhga_yubor(context, user_str, "✍️ MATN", matn)
 
     await xavfsiz_typing(context, update.effective_chat.id)
@@ -263,12 +257,11 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         javob = matn_javob(user_id, matn)
         print(f"🤖 AI javobi:\n{javob}\n")
         await update.message.reply_text(javob)
-
-        # 🤖 AI javobini ham guruhga yuborish
         await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.error(f"Matn xatosi: {e}")
         await update.message.reply_text(f"⚠️ Xatolik: {str(e)[:200]}")
+
 async def rasm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     izoh = update.message.caption or ""
     chiroyli_log(user_info(update), "📸 RASM", izoh)
@@ -281,7 +274,6 @@ async def ovoz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       "ogg", "ovoz")
 
 async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Musiqa/audio fayl sifatida yuborilgan tovush"""
     chiroyli_log(user_info(update), "🎵 AUDIO FAYL")
     await media_ishla(update, context, update.message.audio.file_id,
                       "mp3", "ovoz", update.message.caption or "")
@@ -298,7 +290,6 @@ async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await media_ishla(update, context, video.file_id, "mp4", "video", izoh)
 
 async def dumaloq_video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """⭕️ Dumaloq video (video note) — YANGI!"""
     vn = update.message.video_note
     chiroyli_log(user_info(update), "⭕️ DUMALOQ VIDEO")
     if vn.file_size and vn.file_size > MAX_MEDIA:
@@ -306,7 +297,6 @@ async def dumaloq_video_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await media_ishla(update, context, vn.file_id, "mp4", "video")
 
 async def fayl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fayl sifatida yuborilgan rasm/video/audio"""
     doc = update.message.document
     mime = (doc.mime_type or "").lower()
     izoh = update.message.caption or ""
@@ -331,13 +321,15 @@ async def fayl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     loc = update.message.location
-    chiroyli_log(user_info(update), "📍 JOYLASHUV", f"{loc.latitude}, {loc.longitude}")
-    await update.message.reply_text("📍 Manzilni aniqlayapman...")
-    # 📨 Guruhga xabar
+    user_str = user_info(update)
+    chiroyli_log(user_str, "📍 JOYLASHUV", f"{loc.latitude}, {loc.longitude}")
+
     await guruhga_yubor(
-        context, user_info(update), "📍 JOYLASHUV",
+        context, user_str, "📍 JOYLASHUV",
         f"Lat: {loc.latitude}, Lon: {loc.longitude}"
     )
+
+    await update.message.reply_text("📍 Manzilni aniqlayapman...")
     try:
         manzil = manzilni_aniqla(loc.latitude, loc.longitude)
         if not manzil:
@@ -357,7 +349,6 @@ async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Xatolik. Shahringiz nomini yozib yuboring.")
 
 async def boshqa_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stiker, kontakt va h.k. — tushunmaydigan turlar"""
     await update.message.reply_text(
         "🤔 Bu turdagi xabarni tushunmayman.\n\n"
         "Menga quyidagilarni yuboring:\n"
@@ -370,7 +361,6 @@ async def boshqa_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════
 
 async def post_init(app: Application):
-    """Telegram menyusidagi buyruqlar ro'yxati"""
     await app.bot.set_my_commands([
         BotCommand("start", "🔧 Botni boshlash"),
         BotCommand("yangi", "🔄 Yangi muammo"),
@@ -380,7 +370,7 @@ async def post_init(app: Application):
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        print("❌ TELEGRAM_TOKEN .env faylida topilmadi!")
+        print("❌ TELEGRAM_TOKEN o'rnatilmagan!")
         return
 
     print("🤖 AI Usta bot ishga tushmoqda...")
@@ -394,14 +384,13 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, ovoz_handler))
     app.add_handler(MessageHandler(filters.AUDIO, audio_handler))
     app.add_handler(MessageHandler(filters.VIDEO, video_handler))
-    app.add_handler(MessageHandler(filters.VIDEO_NOTE, dumaloq_video_handler))  # ⭕️ YANGI
+    app.add_handler(MessageHandler(filters.VIDEO_NOTE, dumaloq_video_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, fayl_handler))
     app.add_handler(MessageHandler(filters.LOCATION, joylashuv_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, matn_handler))
     app.add_handler(MessageHandler(filters.Sticker.ALL | filters.CONTACT, boshqa_handler))
 
     print("✅ Bot tayyor! Telegram'da sinab ko'ring.")
-    print("⏹️ To'xtatish: Ctrl + C")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
