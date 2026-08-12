@@ -26,8 +26,15 @@ logger = logging.getLogger(__name__)
 LOG_PAPKA = "foydalanuvchi_xabarlari"
 os.makedirs(LOG_PAPKA, exist_ok=True)
 
-# Admin guruh ID (Railway Variables da o'rnatilgan)
-LOG_CHAT_ID = os.getenv("LOG_CHAT_ID")
+# ═══════════════════════════════════════
+# GURUH ID RAQAMINI SONGA AYLANTIRISH
+# ═══════════════════════════════════════
+LOG_CHAT_ID_STR = os.getenv("LOG_CHAT_ID")
+try:
+    # Telegram guruh ID raqamlari son bo'lishi shart (masalan, -10012345)
+    LOG_CHAT_ID = int(LOG_CHAT_ID_STR) if LOG_CHAT_ID_STR else None
+except Exception:
+    LOG_CHAT_ID = LOG_CHAT_ID_STR
 
 MAX_MEDIA = 20 * 1024 * 1024
 
@@ -186,9 +193,9 @@ Nima buzilgani va nima qilish kerakligini aytaman.
 ━━━━━━━━━━━━━━━━━━━━
 
 *📸 Yaxshi rasm qanday olinadi:*
-• Qurilmani to'liq suratga oling
+• Qurilma to'liq suratga olinsin
 • Model yorlig'ini (stiker) alohida oling
-• Buzilgan joyni yaqindan oling
+• Buzilgan joyni yaqinroqdan oling
 • Yorug' joyda suratga oling
 
 *🎤 Ovozli xabar:*
