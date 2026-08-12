@@ -15,7 +15,7 @@ suhbat_tarixi = {}
 joylashuvlar = {}
 
 # ═══════════════════════════════════════
-# AQLLI QIDIRUV — faqat kerak bo'lganda
+# AQLLI QIDIRUV
 # ═══════════════════════════════════════
 
 QIDIRUV_SOZLARI = [
@@ -45,8 +45,8 @@ def get_tarix(user_id):
 def tarixga_qosh(user_id, rol, matn):
     tarix = get_tarix(user_id)
     tarix.append(types.Content(role=rol, parts=[types.Part(text=matn)]))
-    if len(tarix) > 20:
-        suhbat_tarixi[user_id] = tarix[-20:]
+    if len(tarix) > 12:  # Tarixni 12 tagacha qisqartirdik (tezlik uchun)
+        suhbat_tarixi[user_id] = tarix[-12:]
 
 def set_joylashuv(user_id, manzil):
     joylashuvlar[user_id] = manzil
@@ -72,71 +72,68 @@ def bosh_qism(user_id):
     return qismlar
 
 # ═══════════════════════════════════════
-# AI GA SO'ROV — XAVFSIZ (avto-fallback)
+# AI SO'ROV TIZIMI
 # ═══════════════════════════════════════
 
 def ai_sorov(contents, qidiruv=False):
-    """Qidiruv ishlamasa, avtomatik qidiruvsiz javob beradi"""
     if qidiruv:
         try:
             return client.models.generate_content(
                 model=MODEL, contents=contents, config=qidiruv_config
             )
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print("⚠️ Internet qidiruv limiti tugadi — AI o'z bilimi bilan javob beradi")
-            else:
-                raise
+            print(f"⚠️ Qidiruv xatosi (o'z bilimi ishlatiladi): {e}")
+            
     return client.models.generate_content(model=MODEL, contents=contents)
 
 # ═══════════════════════════════════════
-# JAVOB FUNKSIYALARI
+# NIZOMIY MEDIA JAVOB (TEZKOR!)
 # ═══════════════════════════════════════
 
-def matn_javob(user_id, xabar):
-    tarixga_qosh(user_id, "user", xabar)
-    javob = ai_sorov(
-        bosh_qism(user_id) + get_tarix(user_id),
-        qidiruv=qidiruv_kerakmi(xabar)
-    )
-    ai_javobi = javob.text
-    tarixga_qosh(user_id, "model", ai_javobi)
-    return ai_javobi
-
 def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
-    media_fayl = client.files.upload(file=fayl_path)
-
-    for _ in range(15):
-        media_fayl = client.files.get(name=media_fayl.name)
-        if media_fayl.state.name == "ACTIVE":
-            break
-        time.sleep(1)
-
+    """Rasm va ovozni to'g'ridan-to'g'ri (inline) yuboruvchi tezkor funksiya"""
+    
+    # 1. Mime-type va savollarni aniqlash
     if fayl_turi == "ovoz":
-        asosiy_savol = ("Bu ovozli xabarni tingla. Foydalanuvchi texnika "
-                        "muammosini gapirmoqchi. Uni tushun va AI Usta "
-                        "sifatida javob ber yoki savol ber.")
+        mime_type = "audio/ogg" if fayl_path.endswith(".ogg") else "audio/mp3"
+        asosiy_savol = ("Bu ovozli xabarni tingla va foydalanuvchining muammosini "
+                        "tushunib, AI Usta sifatida javob ber.")
     elif fayl_turi == "video":
-        asosiy_savol = ("Bu videoni ko'rib chiq. Qanday qurilma va qanday "
-                        "muammo ko'rsatilgan? Tovushlarga ham e'tibor ber. "
-                        "AI Usta sifatida tashxis qo'y.")
+        mime_type = "video/mp4"
+        asosiy_savol = ("Bu videoni ko'rib chiq. Tovushlar va harakatlarga "
+                        "e'tibor berib, tashxis qo'y.")
     else:
-        asosiy_savol = ("Bu rasmni tahlil qil. Qanday qurilma? "
-                        "Muammo ko'rinyaptimi?")
+        mime_type = "image/png" if fayl_path.endswith(".png") else "image/jpeg"
+        asosiy_savol = "Bu rasmdagi qurilmani tahlil qil va nosozlikni aniqla."
 
     savol = f"{asosiy_savol} Foydalanuvchi izohi: {izoh}" if izoh else asosiy_savol
-
     tarixga_qosh(user_id, "user", f"[Foydalanuvchi {fayl_turi} yubordi] {izoh}")
 
+    # 2. Tezkor yuborish (Rasm va Ovoz uchun mutlaqo yangi usul)
+    if fayl_turi in ["rasm", "ovoz"]:
+        with open(fayl_path, "rb") as f:
+            fayl_bytes = f.read()
+        
+        # Google serveriga yuklamasdan, to'g'ridan-to'g'ri bayt ko'rinishida yuboramiz
+        media_part = types.Part.from_bytes(data=fayl_bytes, mime_type=mime_type)
+    else:
+        # Faqat videolarni eski usulda yuklaymiz (chunki ular katta)
+        media_fayl = client.files.upload(file=fayl_path)
+        for _ in range(15):
+            media_fayl = client.files.get(name=media_fayl.name)
+            if media_fayl.state.name == "ACTIVE":
+                break
+            time.sleep(1)
+        
+        media_part = types.Part(file_data=types.FileData(
+            file_uri=media_fayl.uri,
+            mime_type=media_fayl.mime_type
+        ))
+
+    # 3. So'rovni yuborish
     media_xabar = types.Content(
         role="user",
-        parts=[
-            types.Part(file_data=types.FileData(
-                file_uri=media_fayl.uri,
-                mime_type=media_fayl.mime_type
-            )),
-            types.Part(text=savol)
-        ]
+        parts=[media_part, types.Part(text=savol)]
     )
 
     javob = ai_sorov(
