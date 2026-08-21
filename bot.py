@@ -44,9 +44,10 @@ MAX_MEDIA = 20 * 1024 * 1024  # 20 MB
 BTN_YORDAM = "❓ Qanday ishlataman?"
 BTN_YANGI = "🔄 Yangi muammo"
 BTN_JOY = "📍 Joylashuvni yuborish"
+BTN_TEL = "📱 Telefon raqamni yuborish"
 
-# Usta chaqirish uchun kutilayotgan holat
-kutilayotgan_telefon = {}
+# Usta chaqirish uchun kutilayotgan foydalanuvchilar
+buyurtma_kutilmoqda = set()
 
 
 def klaviatura():
@@ -59,12 +60,11 @@ def klaviatura():
     )
 
 
-def phone_klaviatura():
-    """Usta chaqirishda kontakt ulashish klaviaturasi"""
+def telefon_klaviatura():
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("📱 Telefon raqamni yuborish", request_contact=True)],
-            [KeyboardButton("❌ Bekor qilish")],
+            [KeyboardButton(BTN_TEL, request_contact=True)],
+            [KeyboardButton(BTN_YANGI), KeyboardButton(BTN_YORDAM)],
         ],
         resize_keyboard=True
     )
@@ -73,10 +73,12 @@ def phone_klaviatura():
 def inline_tashxis_klaviatura():
     """Tashxis javoblariga biriktiriladigan inline tugmalar"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ Xavfsizlik: Tokdan uzdim / Suvni yopdim ✅", callback_data="btn_xavfsizlik_ok")],
-        [InlineKeyboardButton("📞 Ustani chaqirish (Zayavka)", callback_data="btn_ustani_chaqirish")],
-        [InlineKeyboardButton("🔍 Yaqin atrofdan usta topish", callback_data="btn_usta_topish")],
-        [InlineKeyboardButton("🛒 Ehtiyot qismlar narxi", callback_data="btn_zapchast_narxi")],
+        [InlineKeyboardButton("⚡ Tokdan uzdim / Suvni yopdim ✅", callback_data="btn_xavfsizlik_ok")],
+        [InlineKeyboardButton("📞 Ustani chaqirish", callback_data="btn_ustani_chaqirish")],
+        [
+            InlineKeyboardButton("🔍 Usta topish", callback_data="btn_usta_topish"),
+            InlineKeyboardButton("🛒 Zapchast narxi", callback_data="btn_zapchast_narxi"),
+        ],
         [InlineKeyboardButton("🔄 Yangi suhbat", callback_data="btn_yangi_suhbat")],
     ])
 
@@ -125,16 +127,17 @@ async def xavfsiz_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, actio
 
 async def xavfsiz_reply(update: Update, text: str, reply_markup=None):
     """Markdown rejimida javob yuborish, agar Telegram parse xatosi bersa oddiy matnda yuborish"""
-    if not update.message:
+    target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
+    if not target:
         return
     try:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     except BadRequest as e:
         logger.warning(f"Markdown parse xatosi, oddiy matnda yuborilmoqda: {e}")
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        await target.reply_text(text, reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Xabar yuborishda kutilmagan xatolik: {e}")
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        await target.reply_text(text, reply_markup=reply_markup)
 
 
 async def guruhga_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, tur: str, matn: str = "", fayl_path: str = None):
@@ -178,32 +181,47 @@ async def ai_javobini_yubor(context: ContextTypes.DEFAULT_TYPE, javob: str):
         logger.warning(f"AI javobini guruhga yuborishda xato: {e}")
 
 
-async def usta_zayavka_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, phone: str, manzil: str, user_id: int):
-    """Usta chaqirish zayavkasini admin guruhga yuborish"""
-    if not LOG_CHAT_ID:
-        return
+async def buyurtma_yubor(context: ContextTypes.DEFAULT_TYPE, update: Update, phone_number: str):
+    """Admin guruhiga Usta chaqirish zayavkasini yuborish"""
+    user_id = update.effective_user.id
+    user_str = user_info(update)
+    manzil = get_joylashuv(user_id) or "Ko'rsatilmagan"
 
+    # Suhbat tarixidan so'nggi muammoni topish
     tarix = get_tarix(user_id)
-    oxirgi_muammo = "Noma'lum nosozlik"
-    for item in reversed(tarix):
-        if item.role == "user":
-            parts = item.parts
-            if parts and hasattr(parts[0], "text"):
-                oxirgi_muammo = parts[0].text
-                break
+    muammo = "Maishiy texnika nosozligi bo'yicha usta chaqirish"
+    if tarix:
+        for content in reversed(tarix):
+            if content.role == "user":
+                if content.parts and hasattr(content.parts[0], "text"):
+                    muammo = content.parts[0].text[:300]
+                    break
 
-    zayavka_text = (
+    zayavka_matn = (
         f"🚨 *YANGI USTA CHAQIRISH ZAYAVKASI!*\n\n"
-        f"👤 *Foydalanuvchi:* {user_str}\n"
-        f"📞 *Telefon:* `{phone}`\n"
-        f"📍 *Joylashuv:* {manzil if manzil else 'Noma\'lum'}\n"
-        f"💬 *Muammo:* _{oxirgi_muammo[:300]}_\n"
+        f"👤 *Mijoz:* {user_str}\n"
+        f"📞 *Telefon:* `{phone_number}`\n"
+        f"📍 *Manzil:* {manzil}\n"
+        f"🛠 *Muammo tavsifi:* {muammo}\n"
         f"⏰ *Vaqt:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
-    try:
-        await context.bot.send_message(LOG_CHAT_ID, zayavka_text, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Zayavka yuborishda xato: {e}")
+
+    if LOG_CHAT_ID:
+        try:
+            await context.bot.send_message(LOG_CHAT_ID, zayavka_matn, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Zayavkani admin guruhga yuborishda xato: {e}")
+
+    # Foydalanuvchidan usta kutilayotgan bayroqni olib tashlash
+    buyurtma_kutilmoqda.discard(user_id)
+
+    # Foydalanuvchiga tasdiq xabarini yuborish
+    await xavfsiz_reply(
+        update,
+        "✅ *Arizangiz qabul qilindi!*\n\n"
+        "Yaqin oradagi usta 10 daqiqa ichida siz bilan bog'lanadi va muammoni hal qilishga yordam beradi. 🔧",
+        reply_markup=klaviatura()
+    )
 
 
 async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_id: str, kengaytma: str, tur: str, izoh: str = ""):
@@ -218,7 +236,6 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
     try:
         fayl = await context.bot.get_file(fayl_id)
 
-        # Tempfile ishlatish — Railway диск хотирасини тўлдирмаслик учун
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{kengaytma}") as tmp:
             path = tmp.name
 
@@ -230,7 +247,6 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
 
         await xavfsiz_typing(context, chat_id, action=ChatAction.TYPING)
 
-        # Async AI media javobini olish
         javob = await media_javob(user_id, path, izoh, tur)
         print(f"🤖 AI javobi:\n{javob}\n")
 
@@ -242,7 +258,6 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
         await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
 
     finally:
-        # Disk Leak oldini olish: Vaqtinchalik faylni albatta o'chirish
         if path and os.path.exists(path):
             try:
                 os.remove(path)
@@ -265,37 +280,42 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     chat_id = query.message.chat_id if query.message else update.effective_chat.id
 
     if data == "btn_xavfsizlik_ok":
-        await query.answer("Ajoyib! Xavfsizlik qoidalari bajarilgani tasdiqlandi. ✅", show_alert=True)
+        # Alert pop-up ko'rsatish
+        await query.answer(
+            text="Ajoyib! Endi xavfsiz holda ta'mirlashni davom ettirishingiz mumkin. ✅",
+            show_alert=True
+        )
         try:
             await query.message.reply_text(
-                "⚡️ *Xavfsizlik tasdiqlandi!*\n\n"
-                "Elektr rozetkasidan uzilgani yoki suv/gaz jo'mragi yopilgani tasdiqlandi. "
-                "Endi xavfsiz holda keyingi bosqichlarni bajarishingiz mumkin.",
+                "✅ *Xavfsizlik chorasi tasdiqlandi!*\n\n"
+                "Qurilma elektr manbaidan uzildi / suv yopildi. Endi ta'mirlash va tekshirish bosqichlarini xavfsiz bajarishingiz mumkin! 🛠",
                 parse_mode="Markdown"
             )
         except Exception:
-            await query.message.reply_text("⚡️ Xavfsizlik tasdiqlandi! Endi xavfsiz holda ta'mirlashni davom ettirishingiz mumkin.")
-        return
+            await query.message.reply_text(
+                "✅ Xavfsizlik chorasi tasdiqlandi! Endi xavfsiz holda davom ettirishingiz mumkin."
+            )
 
-    await query.answer()
+    elif data == "btn_ustani_chaqirish":
+        await query.answer()
+        chiroyli_log(user_info(update), "🔘 INLINE: USTANI CHAQIRISH")
+        buyurtma_kutilmoqda.add(user_id)
 
-    if data == "btn_ustani_chaqirish":
-        chiroyli_log(user_info(update), "🔘 INLINE: USTA CHAQIRISH")
-        kutilayotgan_telefon[user_id] = True
         try:
             await query.message.reply_text(
-                "📞 *Usta chaqirish uchun kontakt ma'lumotingizni yuboring:*\n\n"
-                "Pastdagi *'📱 Telefon raqamni yuborish'* tugmasini bosing yoki telefon raqamingizni yozib yuboring (masalan: _+998901234567_).",
+                "📞 *Usta chaqirish uchun aloqa raqamingizni yuboring:*\n\n"
+                "Pastdagi *'📱 Telefon raqamni yuborish'* tugmasini bosing yoki raqamingizni yozib yuboring (masalan: _+998901234567_).",
                 parse_mode="Markdown",
-                reply_markup=phone_klaviatura()
+                reply_markup=telefon_klaviatura()
             )
         except Exception:
             await query.message.reply_text(
-                "📞 Usta chaqirish uchun telefon raqamingizni yuboring:",
-                reply_markup=phone_klaviatura()
+                "📞 Usta chaqirish uchun telefon raqamingizni yozing yoki pastdagi tugmani bosing:",
+                reply_markup=telefon_klaviatura()
             )
 
     elif data == "btn_usta_topish":
+        await query.answer()
         chiroyli_log(user_info(update), "🔘 INLINE: USTA TOPISH")
         manzil = get_joylashuv(user_id)
         if not manzil:
@@ -318,34 +338,30 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         prompt = f"Mening joylashuvim: {manzil}. Ushbu texnika nosozligi bo'yicha menga eng yaqin ustaxona va usta telefon raqamlarini, manzilini topib ber."
         try:
             javob = await matn_javob(user_id, prompt)
-            try:
-                await query.message.reply_text(javob, parse_mode="Markdown", reply_markup=inline_tashxis_klaviatura())
-            except Exception:
-                await query.message.reply_text(javob, reply_markup=inline_tashxis_klaviatura())
+            await xavfsiz_reply(update, javob, reply_markup=inline_tashxis_klaviatura())
             await ai_javobini_yubor(context, javob)
         except Exception as e:
             logger.error(f"Usta topish inline xatosi: {e}")
-            await query.message.reply_text(f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
 
     elif data == "btn_zapchast_narxi":
+        await query.answer()
         chiroyli_log(user_info(update), "🔘 INLINE: ZAPCHAST NARXI")
         await xavfsiz_typing(context, chat_id, ChatAction.TYPING)
         prompt = "Ushbu nosozlik uchun kerak bo'ladigan ehtiyot qismlar (zapchastlar) nomini, O'zbekistondagi bozor va do'konlardagi (olx.uz, uzum.uz va ehtiyot qism do'konlaridagi) taxminiy narxlarini so'mda topib aytib ber."
         try:
             javob = await matn_javob(user_id, prompt)
-            try:
-                await query.message.reply_text(javob, parse_mode="Markdown", reply_markup=inline_tashxis_klaviatura())
-            except Exception:
-                await query.message.reply_text(javob, reply_markup=inline_tashxis_klaviatura())
+            await xavfsiz_reply(update, javob, reply_markup=inline_tashxis_klaviatura())
             await ai_javobini_yubor(context, javob)
         except Exception as e:
             logger.error(f"Zapchast narxi inline xatosi: {e}")
-            await query.message.reply_text(f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
 
     elif data == "btn_yangi_suhbat":
+        await query.answer()
         chiroyli_log(user_info(update), "🔘 INLINE: YANGI SUHBAT")
         tarixni_tozala(user_id)
-        kutilayotgan_telefon[user_id] = False
+        buyurtma_kutilmoqda.discard(user_id)
         try:
             await query.message.reply_text(
                 "🔄 *Suhbat tarixi tozalandi!*\n\n"
@@ -358,6 +374,15 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                 "🔄 Suhbat tarixi tozalandi!\nYangi muammo haqida yozing.",
                 reply_markup=klaviatura()
             )
+
+
+async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi kontakt tugmasi orqali nomer yuborganda"""
+    if not update.message or not update.message.contact:
+        return
+    phone = update.message.contact.phone_number
+    chiroyli_log(user_info(update), "📱 KONTAKT YUBORILDI", phone)
+    await buyurtma_yubor(context, update, phone)
 
 
 # ═══════════════════════════════════════
@@ -448,7 +473,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def yangi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tarixni_tozala(user_id)
-    kutilayotgan_telefon[user_id] = False
+    buyurtma_kutilmoqda.discard(user_id)
     msg = (
         "🔄 *Yangi muammo boshlandi!*\n\n"
         "Nima bo'ldi? Yozing, gapiring yoki rasm yuboring 👇"
@@ -468,73 +493,28 @@ async def yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # XABAR HANDLERLARI
 # ═══════════════════════════════════════
 
-async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Foydalanuvchi usta chaqirish uchun kontakt yuborganda"""
-    user_id = update.effective_user.id
-    phone = update.message.contact.phone_number if update.message and update.message.contact else ""
-    user_str = user_info(update)
-    manzil = get_joylashuv(user_id)
-
-    chiroyli_log(user_str, "📞 KONTAKT YUBORILDI", phone)
-    kutilayotgan_telefon[user_id] = False
-
-    await usta_zayavka_yubor(context, user_str, phone, manzil, user_id)
-
-    try:
-        await update.message.reply_text(
-            "✅ *Arizangiz qabul qilindi!*\n\n"
-            "Yaqin oradagi tajribali usta 10 daqiqa ichida siz bilan bog'lanadi va muammoni hal qilishga yordam beradi. Rahmat! 🔧",
-            parse_mode="Markdown",
-            reply_markup=klaviatura()
-        )
-    except Exception:
-        await update.message.reply_text(
-            "✅ Arizangiz qabul qilindi! Yaqin oradagi usta 10 daqiqa ichida siz bilan bog'lanadi.",
-            reply_markup=klaviatura()
-        )
-
-
 async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matn = update.message.text if update.message else ""
-    user_id = update.effective_user.id
-    user_str = user_info(update)
-    chat_id = update.effective_chat.id
 
     if matn == BTN_YORDAM:
         return await yordam(update, context)
     if matn == BTN_YANGI:
         return await yangi(update, context)
 
-    if matn == "❌ Bekor qilish":
-        kutilayotgan_telefon[user_id] = False
-        return await update.message.reply_text("Zayavka bekor qilindi.", reply_markup=klaviatura())
+    user_id = update.effective_user.id
+    user_str = user_info(update)
+    chat_id = update.effective_chat.id
 
-    # Usta chaqirish uchun telefon raqam kutilayotgan bo'lsa
-    if kutilayotgan_telefon.get(user_id):
-        kutilayotgan_telefon[user_id] = False
-        chiroyli_log(user_str, "📞 TELEFON YOZILDI", matn)
-        manzil = get_joylashuv(user_id)
-        await usta_zayavka_yubor(context, user_str, matn, manzil, user_id)
-
-        try:
-            return await update.message.reply_text(
-                "✅ *Arizangiz qabul qilindi!*\n\n"
-                "Yaqin oradagi tajribali usta 10 daqiqa ichida siz bilan bog'lanadi va muammoni hal qilishga yordam beradi. Rahmat! 🔧",
-                parse_mode="Markdown",
-                reply_markup=klaviatura()
-            )
-        except Exception:
-            return await update.message.reply_text(
-                "✅ Arizangiz qabul qilindi! Yaqin oradagi usta 10 daqiqa ichida siz bilan bog'lanadi.",
-                reply_markup=klaviatura()
-            )
+    # Agar foydalanuvchidan usta chaqirish uchun telefon raqami kutilayotgan bo'lsa
+    if user_id in buyurtma_kutilmoqda and matn and not matn.startswith("/"):
+        chiroyli_log(user_str, "📱 MATNLI TELEFON RAQAM", matn)
+        return await buyurtma_yubor(context, update, matn)
 
     chiroyli_log(user_str, "✍️ MATN", matn)
     await guruhga_yubor(context, user_str, "✍️ MATN", matn)
 
     await xavfsiz_typing(context, chat_id, action=ChatAction.TYPING)
     try:
-        # Async AI matn javobini olish
         javob = await matn_javob(user_id, matn)
         print(f"🤖 AI javobi:\n{javob}\n")
 
@@ -687,7 +667,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, fayl_handler))
     app.add_handler(MessageHandler(filters.LOCATION, joylashuv_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, matn_handler))
-    app.add_handler(MessageHandler(filters.Sticker.ALL | filters.CONTACT, boshqa_handler))
+    app.add_handler(MessageHandler(filters.Sticker.ALL, boshqa_handler))
 
     print("✅ Bot tayyor! Telegram'da sinab ko'ring.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
