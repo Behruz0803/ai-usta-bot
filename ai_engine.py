@@ -1,5 +1,4 @@
 import os
-import time
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -18,21 +17,21 @@ suhbat_tarixi = {}
 joylashuvlar = {}
 
 QIDIRUV_SOZLARI = [
-    "usta", "ustaxona", "narx", "do'kon", "dokon", "qayer",
-    "qayerdan", "topib", "top", "olx", "bozor", "ehtiyot",
-    "zapchast", "zapas", "qism", "sotib", "olsam", "yaqin",
-    "manzil", "telefon", "raqam"
+    "usta", "ustaxona", "narx", "narxi", "do'kon", "dokon", "qayer",
+    "qayerdan", "topib", "top", "olx", "bozor", "ehtiyot", "ehtiyot qism",
+    "zapchast", "zapas", "qism", "sotib", "sotib olish", "olsam", "yaqin",
+    "manzil", "telefon", "raqam", "xizmat"
 ]
 
 
-def qidiruv_kerakmi(matn):
+def qidiruv_kerakmi(matn, user_id=None):
     matn = (matn or "").lower()
-    return any(soz in matn for soz in QIDIRUV_SOZLARI)
-
-
-qidiruv_config = types.GenerateContentConfig(
-    tools=[types.Tool(google_search=types.GoogleSearch())]
-)
+    bor = any(soz in matn for soz in QIDIRUV_SOZLARI)
+    if bor:
+        return True
+    if user_id and get_joylashuv(user_id) and any(w in matn for w in ["qayer", "narx", "usta", "do'kon", "sotib"]):
+        return True
+    return False
 
 
 def get_tarix(user_id):
@@ -44,8 +43,9 @@ def get_tarix(user_id):
 def tarixga_qosh(user_id, rol, matn):
     tarix = get_tarix(user_id)
     tarix.append(types.Content(role=rol, parts=[types.Part(text=matn)]))
-    if len(tarix) > 12:
-        suhbat_tarixi[user_id] = tarix[-12:]
+    # Oxirgi 10 ta xabarni saqlash (kontekstni toza va ixcham tutish)
+    if len(tarix) > 10:
+        suhbat_tarixi[user_id] = tarix[-10:]
 
 
 def set_joylashuv(user_id, manzil):
@@ -56,81 +56,86 @@ def get_joylashuv(user_id):
     return joylashuvlar.get(user_id)
 
 
-def bosh_qism(user_id):
-    qismlar = [
-        types.Content(role="user", parts=[types.Part(text=SYSTEM_PROMPT)]),
-        types.Content(
-            role="model",
-            parts=[types.Part(text="Tushundim. Men AI Usta sifatida yordam berishga tayyorman.")]
-        ),
-    ]
+def get_system_instruction(user_id):
+    """System Prompt va joylashuv ma'lumotlarini birlashtirish"""
     manzil = get_joylashuv(user_id)
     if manzil:
-        qismlar.append(types.Content(
-            role="user",
-            parts=[types.Part(text=(
-                f"[TIZIM MA'LUMOTI: Foydalanuvchi joylashuvi: {manzil}. "
-                "Ustaxona va narxlarni shu joydan qidir.]"
-            ))]
-        ))
-        qismlar.append(types.Content(
-            role="model",
-            parts=[types.Part(text="Tushundim, joylashuvni hisobga olaman.")]
-        ))
-    return qismlar
+        return (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"📍 FOYDALANUVCHINING ANIQ JOYLASHUVI:\n"
+            f"Foydalanuvchi manzili: {manzil}. Ustaxona, usta, do'kon va ehtiyot qism "
+            f"so'ralganda shu joy yaqinidan qidir va aniq tavsiya ber."
+        )
+    return SYSTEM_PROMPT
 
 
-def ai_sorov(contents, qidiruv=False):
+async def ai_sorov(user_id, contents, qidiruv=False):
+    """Gemini API'ga aio (асинхронный) client bilan so'rov yuborish (Event Loop блокировкасиз)"""
+    sys_instruction = get_system_instruction(user_id)
+    config_args = {"system_instruction": sys_instruction}
+
+    if qidiruv:
+        config_args["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+
+    config = types.GenerateContentConfig(**config_args)
+
     if qidiruv:
         try:
-            return client.models.generate_content(
+            return await client.aio.models.generate_content(
                 model=MODEL,
                 contents=contents,
-                config=qidiruv_config
+                config=config
             )
         except Exception as e:
-            print(f"⚠️ Qidiruv xatosi, oddiy javob beriladi: {e}")
+            print(f"⚠️ Google Search qidiruv xatosi, oddiy rejimda qayta uriniladi: {e}")
+            config_no_search = types.GenerateContentConfig(system_instruction=sys_instruction)
+            return await client.aio.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=config_no_search
+            )
 
-    return client.models.generate_content(
+    return await client.aio.models.generate_content(
         model=MODEL,
-        contents=contents
+        contents=contents,
+        config=config
     )
 
 
-def matn_javob(user_id, xabar):
-    """Matnli xabarga javob — bu funksiya tushib qolgan edi"""
+async def matn_javob(user_id, xabar):
+    """Matnli xabarga асинхронный AI javobi"""
     tarixga_qosh(user_id, "user", xabar)
-    javob = ai_sorov(
-        bosh_qism(user_id) + get_tarix(user_id),
-        qidiruv=qidiruv_kerakmi(xabar)
-    )
+    contents = get_tarix(user_id)
+    need_search = qidiruv_kerakmi(xabar, user_id)
+
+    javob = await ai_sorov(user_id, contents, qidiruv=need_search)
     ai_javobi = javob.text
     tarixga_qosh(user_id, "model", ai_javobi)
     return ai_javobi
 
 
-def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
+async def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
+    """Rasm, video va ovozli xabarlarga асинхронный AI javobi"""
     if fayl_turi == "ovoz":
         mime_type = "audio/ogg" if fayl_path.endswith(".ogg") else "audio/mpeg"
         asosiy_savol = (
-            "Bu ovozli xabarni tingla. Foydalanuvchi texnika muammosini "
-            "gapirmoqchi. Uni tushun va AI Usta sifatida javob ber."
+            "Bu ovozli xabarni tingla. Foydalanuvchi maishiy texnika yoki elektronika "
+            "muammosini tushuntiryapti. Xabarni tushun va AI Usta sifatida tashxis qo'y."
         )
     elif fayl_turi == "video":
         mime_type = "video/mp4"
         asosiy_savol = (
-            "Bu videoni ko'rib chiq. Qanday qurilma va qanday muammo "
-            "ko'rsatilgan? Tovushlarga ham e'tibor ber. Tashxis qo'y."
+            "Bu videoni ko'rib chiq. Qanday qurilma va qanday nosozlik ko'rsatilgan? "
+            "Tovushlar va harakatlarga e'tibor berib, AI Usta sifatida tashxis qo'y."
         )
     else:
         mime_type = "image/png" if fayl_path.endswith(".png") else "image/jpeg"
         asosiy_savol = (
-            "Bu rasmni tahlil qil. Qanday qurilma? Brendi ko'rinyaptimi? "
-            "Muammo yoki nosozlik bormi?"
+            "Bu rasmni tahlil qil. Qanday qurilma, brend/model va qanday nosozlik "
+            "ko'rinyapti? AI Usta sifatida tashxis va yechim ber."
         )
 
     savol = f"{asosiy_savol} Foydalanuvchi izohi: {izoh}" if izoh else asosiy_savol
-    tarixga_qosh(user_id, "user", f"[Foydalanuvchi {fayl_turi} yubordi] {izoh}")
 
     with open(fayl_path, "rb") as f:
         fayl_bytes = f.read()
@@ -141,13 +146,18 @@ def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
         parts=[media_part, types.Part(text=savol)]
     )
 
-    javob = ai_sorov(
-        bosh_qism(user_id) + get_tarix(user_id)[:-1] + [media_xabar],
-        qidiruv=qidiruv_kerakmi(izoh)
-    )
+    # Oldingi suhbat tarixi + joriy медиа fayl
+    contents = get_tarix(user_id) + [media_xabar]
+    need_search = qidiruv_kerakmi(izoh, user_id)
 
+    javob = await ai_sorov(user_id, contents, qidiruv=need_search)
     ai_javobi = javob.text
+
+    # Tarixga медиа haqida ixcham matnli ma'lumot qo'shish (xotirani og'irlashtirmaslik uchun)
+    user_summary = f"[Foydalanuvchi {fayl_turi} yubordi] {izoh}".strip()
+    tarixga_qosh(user_id, "user", user_summary)
     tarixga_qosh(user_id, "model", ai_javobi)
+
     return ai_javobi
 
 
