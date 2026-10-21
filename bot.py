@@ -643,15 +643,12 @@ async def post_init(app: Application):
     ])
 
 
-def main():
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        print("❌ TELEGRAM_TOKEN o'rnatilmagan!")
-        return
+def register_handlers(app: Application) -> Application:
+    """Barcha handlerlarni ro'yxatdan o'tkazish.
 
-    print("🤖 AI Usta bot ishga tushmoqda...")
-    app = Application.builder().token(token).post_init(post_init).build()
-
+    Polling (bot.py) va webhook (api/webhook.py — Vercel) rejimlari
+    tomonidan bir xil ishlatiladi.
+    """
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("yangi", yangi))
     app.add_handler(CommandHandler("yordam", yordam))
@@ -668,6 +665,18 @@ def main():
     app.add_handler(MessageHandler(filters.LOCATION, joylashuv_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, matn_handler))
     app.add_handler(MessageHandler(filters.Sticker.ALL, boshqa_handler))
+    return app
+
+
+def main():
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        print("❌ TELEGRAM_TOKEN o'rnatilmagan!")
+        return
+
+    print("🤖 AI Usta bot ishga tushmoqda...")
+    app = Application.builder().token(token).post_init(post_init).build()
+    register_handlers(app)
 
     print("✅ Bot tayyor! Telegram'da sinab ko'ring.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
