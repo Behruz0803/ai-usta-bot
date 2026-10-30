@@ -1,5 +1,5 @@
-google-genai
-python-telegram-bot
-python-dotenv
-requests
-httpx
+google-genai>=1.0
+python-telegram-bot>=21.0
+python-dotenv>=1.0
+httpx>=0.27
+requests>=2.31

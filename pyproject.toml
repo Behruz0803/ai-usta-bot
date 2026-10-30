@@ -1,2 +1,18 @@
+[project]
+name = "ai-usta-bot"
+version = "1.0.0"
+description = "AI Usta — Gemini asosidagi Telegram usta bot (Vercel webhook, 24/7)"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai",
+    "python-telegram-bot",
+    "python-dotenv",
+    "httpx",
+    "requests",
+]
+
+# Vercel Python entrypoint: "modul:ozgaruvchi" formatida bo'lishi SHART.
+# Avval "api/webhook:handler" (slash bilan) yozilgani uchun Vercel
+# [PYTHON_ENTRYPOINT_NOT_FOUND] xatosi bilan ERROR holatiga tushgan.
 [tool.vercel]
-entrypoint = "api/webhook:handler"
+entrypoint = "api.webhook:app"

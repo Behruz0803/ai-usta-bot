@@ -119,3 +119,35 @@ ai-usta-bot/
 ## 📄 Litsenziya
 
 Loyiha ta'lim va shaxsiy foydalanish uchun ochiq. Muallif: [@Behruz0803](https://github.com/Behruz0803).
+
+---
+
+## ☁️ Vercel'ga deploy (24/7, server doim ishlab turadi)
+
+Bot **webhook** rejimida ishlaydi: kompyuteringiz o'chiq bo'lsa ham bot
+Telegram'da doim javob beradi. Server kerak emas — Vercel funksiyasi har bir
+xabarda uyg'onadi.
+
+1. [vercel.com](https://vercel.com) da shu GitHub reponi import qiling
+   (loyiha allaqachon yaratilgan bo'lsa — keyingi qadamga o'ting).
+2. **Settings → Environment Variables** ga quyidagilarni kiriting
+   (`.env.example` ga qarang):
+   - `TELEGRAM_TOKEN` — BotFather tokeni *(majburiy)*
+   - `GEMINI_API_KEY` — Gemini kaliti *(majburiy)*
+   - `LOG_CHAT_ID` — log-guruh ID'si *(ixtiyoriy)*
+   - `WEBHOOK_SECRET` — maxfiy so'z *(ixtiyoriy, tavsiya etiladi)*
+3. `main` branchga push qiling — Vercel avtomatik deploy qiladi.
+4. Webhook o'rnatilganini tekshiring (brauzerda oching):
+   - `https://<loyiha>.vercel.app/api/webhook` → `{"status": "ok", ...}`
+   - `https://<loyiha>.vercel.app/api/webhook?info=1` → bot nomi va webhook URL
+   - kerak bo'lsa: `https://<loyiha>.vercel.app/api/webhook?setup=1`
+     webhookni qayta o'rnatadi.
+5. Telegram'da botga `/start` yuborib sinab ko'ring. ✅
+
+**Muhim eslatmalar:**
+
+- Webhook ishlayotganda lokalda `python bot.py` (polling) ni ishga
+  tushirmang — ikkalasi bir-biriga halal beradi.
+- Suhbat tarixi xotirada saqlanadi; Vercel funksiyasi qayta ishga tushsa
+  tarix tozalanishi mumkin (bu normal holat, `/yangi` kabi ishlaydi).
+- Lokal sinov uchun: `.env` yarating va `python bot.py` ni ishga tushiring.

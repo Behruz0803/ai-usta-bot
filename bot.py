@@ -669,17 +669,24 @@ def register_handlers(app: Application) -> Application:
 
 
 def main():
+    """Polling rejimi — lokal sinov uchun.
+
+    DIQQAT: Bot Vercel'da webhook orqali 24/7 ishlayotganda polling'ni
+    ishga tushirmang — ikkalasi bir-biriga halal beradi. Production uchun
+    api/webhook.py ishlatiladi (README → "Vercel'ga deploy" bo'limi).
+    """
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        print("❌ TELEGRAM_TOKEN o'rnatilmagan!")
+        print("❌ TELEGRAM_TOKEN o'rnatilmagan! .env faylni tekshiring (.env.example ga qarang).")
         return
 
-    print("🤖 AI Usta bot ishga tushmoqda...")
+    print("🤖 AI Usta bot ishga tushmoqda (polling)...")
     app = Application.builder().token(token).post_init(post_init).build()
     register_handlers(app)
 
     print("✅ Bot tayyor! Telegram'da sinab ko'ring.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Webhook o'rnatilgan bo'lsa polling ishlamaydi — avval webhookni o'chiramiz.
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
