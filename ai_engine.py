@@ -6,12 +6,33 @@ from prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
-MODEL = "gemini-3-flash-preview"
+# Model nomi env orqali o'zgartirilishi mumkin (masalan GEMINI_MODEL=gemini-2.5-flash)
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY"),
-    http_options={"timeout": 180000},  # 180 soniya
-)
+_client = None
+
+
+def get_client():
+    """Gemini client'ni dangasa (lazy) yaratish.
+
+    Avval client import vaqtida yaratilardi — GEMINI_API_KEY bo'lmasa
+    modul importi qulab, Vercel funksiyasi umuman ishga tushmasdi.
+    Endi client birinchi so'rovda yaratiladi va keshlanadi.
+    """
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY o'rnatilmagan! Vercel → Project → Settings → "
+                "Environment Variables bo'limiga qo'shing."
+            )
+        _client = genai.Client(
+            api_key=api_key,
+            http_options={"timeout": 180000},  # 180 soniya
+        )
+    return _client
+
 
 suhbat_tarixi = {}
 joylashuvlar = {}
@@ -70,7 +91,8 @@ def get_system_instruction(user_id):
 
 
 async def ai_sorov(user_id, contents, qidiruv=False):
-    """Gemini API'ga aio (асинхронный) client bilan so'rov yuborish (Event Loop блокировкасиз)"""
+    """Gemini API'ga aio (async) client bilan so'rov yuborish (event loop bloklanmaydi)"""
+    client = get_client()
     sys_instruction = get_system_instruction(user_id)
     config_args = {"system_instruction": sys_instruction}
 
@@ -103,19 +125,19 @@ async def ai_sorov(user_id, contents, qidiruv=False):
 
 
 async def matn_javob(user_id, xabar):
-    """Matnli xabarga асинхронный AI javobi"""
+    """Matnli xabarga asinxron AI javobi"""
     tarixga_qosh(user_id, "user", xabar)
     contents = get_tarix(user_id)
     need_search = qidiruv_kerakmi(xabar, user_id)
 
     javob = await ai_sorov(user_id, contents, qidiruv=need_search)
-    ai_javobi = javob.text
+    ai_javobi = javob.text or "⚠️ Bo'sh javob keldi. Qayta yozib ko'ring."
     tarixga_qosh(user_id, "model", ai_javobi)
     return ai_javobi
 
 
 async def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
-    """Rasm, video va ovozli xabarlarga асинхронный AI javobi"""
+    """Rasm, video va ovozli xabarlarga asinxron AI javobi"""
     if fayl_turi == "ovoz":
         mime_type = "audio/ogg" if fayl_path.endswith(".ogg") else "audio/mpeg"
         asosiy_savol = (
@@ -146,14 +168,14 @@ async def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
         parts=[media_part, types.Part(text=savol)]
     )
 
-    # Oldingi suhbat tarixi + joriy медиа fayl
+    # Oldingi suhbat tarixi + joriy media fayl
     contents = get_tarix(user_id) + [media_xabar]
     need_search = qidiruv_kerakmi(izoh, user_id)
 
     javob = await ai_sorov(user_id, contents, qidiruv=need_search)
-    ai_javobi = javob.text
+    ai_javobi = javob.text or "⚠️ Bo'sh javob keldi. Qayta yuborib ko'ring."
 
-    # Tarixga медиа haqida ixcham matnli ma'lumot qo'shish (xotirani og'irlashtirmaslik uchun)
+    # Tarixga media haqida ixcham matnli ma'lumot qo'shish (xotirani og'irlashtirmaslik uchun)
     user_summary = f"[Foydalanuvchi {fayl_turi} yubordi] {izoh}".strip()
     tarixga_qosh(user_id, "user", user_summary)
     tarixga_qosh(user_id, "model", ai_javobi)
