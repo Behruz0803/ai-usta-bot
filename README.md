@@ -151,3 +151,21 @@ xabarda uyg'onadi.
 - Suhbat tarixi xotirada saqlanadi; Vercel funksiyasi qayta ishga tushsa
   tarix tozalanishi mumkin (bu normal holat, `/yangi` kabi ishlaydi).
 - Lokal sinov uchun: `.env` yarating va `python bot.py` ni ishga tushiring.
+
+### Bir martalik eslatma (2026-yil 2-noyabr, 09:50 Toshkent vaqti)
+
+`.github/workflows/one-time-reminder.yml` 2026-yil 2-noyabr kuni
+09:50 Toshkent vaqti (04:50 UTC) uchun mo'ljallangan. GitHub
+scheduled workflow'lari kechikishi mumkin; aniq daqiqada yetib borish kafolatlanmaydi.
+
+Ishlashi uchun belgilangan vaqtdan oldin workflow default branch (`main`)ga
+birlashtirilgan va GitHub Actions yoqilgan bo'lishi kerak. GitHub repository
+Settings → Secrets and variables → Actions bo'limida `TELEGRAM_TOKEN` va
+`SUPABASE_URL` va `SUPABASE_SERVICE_ROLE_KEY`
+secretlarini yarating. Vercel o'zgaruvchilari GitHub Actions'ga avtomatik o'tmaydi.
+Maxfiy qiymatlarni repoga yoki logga yozmang.
+
+Faqat bazada 09:50 gacha qayd etilgan, bot bilan shaxsiy suhbat boshlagan va botni bloklamagan
+foydalanuvchilarga yuboriladi. Har biriga bir marta urinish qilinadi; xatolar
+Actions logida ko'rinadi. Workflow'ni qayta ishga tushirish takroriy xabar yuborishi
+mumkin. `/start` yuborgan yangi foydalanuvchilar ID’lari Supabase bazasiga qo‘shiladi.

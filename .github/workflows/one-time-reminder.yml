@@ -1,0 +1,28 @@
+name: Bir martalik mijozlarga eslatma
+
+on:
+  schedule:
+    # 09:50 Asia/Tashkent = 04:50 UTC, 2026-11-02.
+    - cron: '50 4 2 11 *'
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    # Cron repeats yearly, so explicitly restrict it to the intended date.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check intended date
+        id: date
+        run: echo "send=$(test "$(date -u +%F)" = 2026-11-02 && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.date.outputs.send == 'yes'
+      - name: Send reminder
+        if: steps.date.outputs.send == 'yes'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/send_reminder.py
