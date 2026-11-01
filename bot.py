@@ -15,6 +15,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
 )
+from user_store import save_user
 from ai_engine import (
     matn_javob, media_javob, tarixni_tozala, set_joylashuv, get_joylashuv, get_tarix
 )
@@ -467,6 +468,8 @@ albatta rozetkadan uzing!
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chiroyli_log(user_info(update), "🚀 START")
+    if update.effective_chat and update.effective_chat.type == "private":
+        await save_user(update.effective_chat.id)
     await xavfsiz_reply(update, SALOM)
 
 
