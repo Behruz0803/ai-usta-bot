@@ -115,6 +115,9 @@ def search_hints(question: str) -> str:
         "- 'faqat ijro etilgan' = deal_status = 'Исполнен' aniq. 'Исполнен(Частично)' va 'Аннулирован' ni qo'shmang, agar foydalanuvchi bekor qilinganini olmading desa.",
         "- Eksport summasini so'mda so'rasa, deal_sum_uzs (dollar * shu kundagi kurs) ishlating, yalang deal_sum emas.",
         "- 0 qator yoki COUNT=0 bo'lsa raqam to'qimang. 'yo'q' deb ayting.",
+        "- '3-avgust 1$lik shartnoma' — salom emas. Sana + summa + valyuta. "
+        "1$ = deal_sum yoki base_price = 1 va currency = 'Доллар США'. "
+        "Aniq mos bo'lmasa 0 qator, dollar shartnoma to'qilmaydi. 'shartoma' = shartnoma.",
     ]
     if is_cotton_oil_question(question):
         lines.append(

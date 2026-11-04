@@ -581,7 +581,9 @@ UZEX_KEYWORDS = [
     "eksport", "экспорт", "narx", "цена", "summa", "сумма", "qancha", "сколько", "nechta",
     "qaysi", "какой", "yilda", "году", "region", "viloyat", "oblast", "hajm", "объем",
     "qimmat", "arzon", "дорог", "дешев", "aksiya", "акция", "aylantir", "оборот",
-    "avgust", "август", "top broker", "топ брокер",
+    "avgust", "август", "yanvar", "fevral", "mart", "aprel", "sentabr", "oktabr",
+    "noyabr", "dekabr", "top broker", "топ брокер",
+    "dollar", "доллар", "usd", "$", "shartom", "so'm", "so‘m", "сум", "kurs", "курс",
 ]
 
 def is_uzex_query(text: str) -> bool:

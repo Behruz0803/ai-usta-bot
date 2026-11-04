@@ -73,6 +73,220 @@ def _done(sql, exp, lang):
     return {"sql": sql, "explanation": exp, "language": lang, "needs_data": True, "confident": True}
 
 
+def extract_calendar(text):
+    """Yil, oy, kun. Kun faqat oy nomi yoki to'liq sana yonida bo'lsa."""
+    low = text.lower().replace("’", "'").replace("‘", "'")
+    m = re.search(r"\b(202[2-6])-(\d{2})-(\d{2})\b", text)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = re.search(r"\b(\d{1,2})[./](\d{1,2})[./](202[2-6])\b", text)
+    if m:
+        return int(m.group(3)), int(m.group(2)), int(m.group(1))
+    year_s = extract_year(text)
+    month = extract_month(text)
+    day = None
+    if month:
+        for uz, ru, num in _MONTHS:
+            if num != month:
+                continue
+            m = re.search(
+                rf"\b(\d{{1,2}})(?:\s*[-]?(?:го|chi|i))?\s*[-.]?\s*(?:{uz}|{ru})\w*",
+                low,
+            )
+            if not m:
+                m = re.search(rf"\b(?:{uz}|{ru})\w*\s+(\d{{1,2}})\b", low)
+            if m:
+                day = int(m.group(1))
+                if 1 <= day <= 31:
+                    break
+                day = None
+    year = int(year_s) if year_s else None
+    return year, month, day
+
+
+def _date_pred(col, year, month, day):
+    import calendar
+    if year and month and day:
+        if not (1 <= int(month) <= 12 and 1 <= int(day) <= calendar.monthrange(int(year), int(month))[1]):
+            return None, None
+        iso = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        return f"{col} = '{iso}'", iso
+    if year and month:
+        last = calendar.monthrange(int(year), int(month))[1]
+        start = f"{int(year):04d}-{int(month):02d}-01"
+        end = f"{int(year):04d}-{int(month):02d}-{last:02d}"
+        return f"{col} BETWEEN '{start}' AND '{end}'", f"{start}..{end}"
+    if month and day and not year:
+        if not (1 <= int(day) <= 31 and 1 <= int(month) <= 12):
+            return None, None
+        md = f"{int(month):02d}-{int(day):02d}"
+        return f"strftime('%m-%d', {col}) = '{md}'", md
+    if year:
+        return f"{col} BETWEEN '{int(year)}-01-01' AND '{int(year)}-12-31'", str(year)
+    return "1=1", "barcha sanalar"
+
+
+def _amt(amount):
+    return f"{float(amount):.4f}".rstrip("0").rstrip(".")
+
+
+def _money_amount(text):
+    """Faqat valyuta yozuvi yonidagi son. Yil va kunni summa deb olmaydi."""
+    ql = text.lower().replace("’", "'").replace("‘", "'").replace("`", "'")
+    usd = re.search(
+        r"(\d+(?:[.,]\d+)?)(?:\s*(ming|тысяч\w*))?\s*[-]?\s*(?:\$|usd|dollar\w*|доллар\w*)"
+        r"|\$\s*(\d+(?:[.,]\d+)?)",
+        ql,
+    )
+    if not usd and re.search(r"\b(bir|один|одна)\s*[-]?\s*(?:\$|dollar\w*|доллар\w*|usd)", ql):
+        return 1.0, "USD"
+    if usd:
+        raw = usd.group(1) or usd.group(3)
+        val = float(raw.replace(",", "."))
+        if usd.group(2):
+            val *= 1000.0
+        return val, "USD"
+    uzs = re.search(
+        r"(\d+(?:[.,]\d+)?)(?:\s*(ming|тысяч\w*))?\s*[-]?\s*(?:so'm\w*|somlik|som\w*|сум\w*|uzs\w*)",
+        ql,
+    )
+    if not uzs and re.search(r"\b(bir)\s*[-]?\s*(?:so'm|som|сум)", ql):
+        return 1.0, "UZS"
+    if uzs:
+        val = float(uzs.group(1).replace(",", "."))
+        if uzs.group(2):
+            val *= 1000.0
+        return val, "UZS"
+    return None, None
+
+
+def looks_like_market(question: str) -> bool:
+    ql = (question or "").lower().replace("’", "'").replace("‘", "'")
+    if any(w in ql for w in (
+        "$", "dollar", "доллар", "usd", "shartn", "shartom", "bitim", "сдел",
+        "kontrakt", "контракт", "broker", "брокер", "stir", "инн", "so'm", "сум",
+        "kurs", "курс", "qimmat", "arzon", "aksiya", "акция",
+    )):
+        return True
+    year, month, day = extract_calendar(question or "")
+    return bool(year and (month or day))
+
+
+def dated_money_sql(question: str):
+    """Sana + dollar/so'm summa. Salom emas, aniq qidiruv."""
+    lang = detect_lang(question)
+    ql = question.lower().replace("’", "'").replace("‘", "'").replace("`", "'")
+    amount, money = _money_amount(question)
+    year, month, day = extract_calendar(question)
+    ranking = any(w in ql for w in (
+        "qimmat", "arzon", "top", "топ", "eng ko", "дорог", "дешев", "broker", "брокер",
+    ))
+    # Reyting savolini (eng qimmat bitim) bu naqsh yutib yubormasin.
+    if ranking and amount is None:
+        return None
+    wants_contract = any(w in ql for w in ("shartn", "shartom", "kontrakt", "контракт"))
+    wants_deal = any(w in ql for w in ("bitim", "сдел", "shartn", "shartom", "kontrakt", "контракт"))
+    wants_rate = any(w in ql for w in ("kurs", "курс")) and money == "USD"
+    deal_pred, deal_label = _date_pred("d.deal_date", year, month, day)
+    reg_pred, reg_label = _date_pred("reg_date", year, month, day)
+    rate_pred, rate_label = _date_pred("rate_date", year, month, day)
+    if (year and month and day) and (deal_pred is None or reg_pred is None):
+        sql = "SELECT 'noto''g''ri sana' AS xato WHERE 0;"
+        exp = "Sana kalendarda yo'q. Qidiruv qilinmadi, raqam to'qilmaydi." if lang == "uz" else "Такой даты нет в календаре."
+        return _done(sql, exp, lang)
+
+    if wants_rate and rate_pred:
+        mult = amount if amount is not None else 1.0
+        sql = (
+            "SELECT rate_date, rate AS som_per_usd, "
+            f"ROUND(rate * {mult}, 2) AS som "
+            f"FROM usd_rates WHERE {rate_pred} ORDER BY rate_date LIMIT 31;"
+        )
+        exp = (
+            f"{_amt(mult)} AQSH dollari kursi, so'm ({rate_label}). Bu shartnoma narxi emas."
+            if lang == "uz" else
+            f"Курс {_amt(mult)} USD в сумах ({rate_label})."
+        )
+        return _done(sql, exp, lang)
+
+    if amount is None:
+        # To'liq kun: shu kundagi bitim/shartnoma. Oy-darajadagi reytingsiz savolni bu yerga tortmaymiz.
+        if not (year and month and day):
+            return None
+        if wants_contract and "bitim" not in ql and "сдел" not in ql:
+            sql = (
+                "SELECT contract_id, reg_date, product_name, currency, "
+                "ROUND(base_price, 2) AS base_price, unit, contract_type "
+                f"FROM contracts WHERE {reg_pred} ORDER BY contract_id LIMIT 20;"
+            )
+            exp = f"{reg_label} da ro'yxatdan o'tgan shartnomalar. Summa so'ralmagan." if lang == "uz" else f"Контракты, зарегистрированные {reg_label}."
+            return _done(sql, exp, lang)
+        sql = (
+            "SELECT IFNULL(c.currency, '?') AS currency, COUNT(*) AS bitim, "
+            "ROUND(MIN(d.deal_sum), 2) AS min_sum, ROUND(MAX(d.deal_sum), 2) AS max_sum "
+            "FROM deals d LEFT JOIN contracts c ON c.contract_id = d.contract_id "
+            f"WHERE {deal_pred} GROUP BY c.currency ORDER BY bitim DESC;"
+        )
+        exp = f"{deal_label} dagi bitimlar, valyuta bo'yicha. Aniq summa so'ralmagan." if lang == "uz" else f"Сделки за {deal_label} по валюте."
+        return _done(sql, exp, lang)
+
+    if not wants_deal and not wants_contract and money is None:
+        return None
+    # "1$lik shartoma" — shartnoma so'zi bo'lmasa ham dollar summasi birja savoli.
+    currency = "Доллар США" if money == "USD" else "Узбекский сум"
+    unit_name = "USD" if money == "USD" else "so'm"
+    tol = 0.01 if amount >= 1 else 0.0001
+    product = extract_product(question)
+    prod_d = f" AND ufold(d.product_name) LIKE ufold('%{product}%')" if product else ""
+    prod_c = f" AND ufold(product_name) LIKE ufold('%{product}%')" if product else ""
+    label = deal_label or reg_label
+    sql = f"""
+WITH exact AS (
+  SELECT 'aniq shartnoma' AS manba, CAST(contract_id AS TEXT) AS id, reg_date AS sana,
+         product_name AS mahsulot, ROUND(base_price, 2) AS summa, currency AS valyuta,
+         unit AS birlik, contract_type AS holat, 'base_price' AS mezon,
+         ROUND(ABS(base_price - {amount}), 2) AS farq
+  FROM contracts
+  WHERE currency = '{currency}' AND ABS(base_price - {amount}) < {tol} AND {reg_pred}{prod_c}
+  UNION ALL
+  SELECT 'aniq bitim summasi', CAST(d.deal_id AS TEXT), d.deal_date, d.product_name,
+         ROUND(d.deal_sum, 2), c.currency, d.unit, d.deal_status, 'deal_sum',
+         ROUND(ABS(d.deal_sum - {amount}), 2)
+  FROM deals d
+  JOIN contracts c ON c.contract_id = d.contract_id
+  WHERE c.currency = '{currency}' AND ABS(d.deal_sum - {amount}) < {tol} AND {deal_pred}{prod_d}
+  UNION ALL
+  SELECT 'aniq birlik narxi', CAST(d.deal_id AS TEXT), d.deal_date, d.product_name,
+         ROUND(d.deal_sum * 1.0 / (d.quantity * d.lot), 2), c.currency, d.unit, d.deal_status, 'unit_price',
+         ROUND(ABS(d.deal_sum * 1.0 / (d.quantity * d.lot) - {amount}), 2)
+  FROM deals d
+  JOIN contracts c ON c.contract_id = d.contract_id
+  WHERE c.currency = '{currency}' AND d.quantity > 0 AND d.lot > 0
+    AND ABS(d.deal_sum * 1.0 / (d.quantity * d.lot) - {amount}) < {tol} AND {deal_pred}{prod_d}
+)
+SELECT * FROM exact
+UNION ALL
+SELECT * FROM (
+  SELECT 'ANIQ EMAS — eng yaqin bitim' AS manba, CAST(d.deal_id AS TEXT), d.deal_date,
+         d.product_name, ROUND(d.deal_sum, 2), c.currency, d.unit, d.deal_status,
+         'eng yaqin deal_sum', ROUND(ABS(d.deal_sum - {amount}), 2)
+  FROM deals d
+  JOIN contracts c ON c.contract_id = d.contract_id
+  WHERE c.currency = '{currency}' AND d.deal_sum > 0 AND {deal_pred}{prod_d}
+    AND NOT EXISTS (SELECT 1 FROM exact)
+  ORDER BY ABS(d.deal_sum - {amount})
+  LIMIT 5
+);
+""".strip()
+    exp = (
+        f"Aniq {_amt(amount)} {unit_name} qidirildi ({label}): shartnoma bazaviy narxi, bitim summasi va birlik narxi. "
+        f"Valyuta: {currency}. Aniq mos bo'lmasa, 'ANIQ EMAS' qatorlari shu filtrdagi eng yaqin bitim — ular {_amt(amount)} {unit_name} emas. Raqam to'qilmaydi."
+        if lang == "uz" else
+        f"Искалась точная сумма {_amt(amount)} {unit_name} ({label}). Строки «ANIQ EMAS» — ближайшие сделки, не точная сумма."
+    )
+    return _done(sql, exp, lang)
+
+
 def casual_ranking_sql(question: str):
     """Qisqa og'zaki savollar: Gemini ularni salom deb o'qimasin."""
     lang = detect_lang(question)
@@ -251,6 +465,10 @@ def heuristic_sql(question: str):
     """
     Returns dict with keys like generate_sql: sql, explanation, language, needs_data
     """
+    dated = dated_money_sql(question)
+    if dated:
+        return dated
+
     casual = casual_ranking_sql(question)
     if casual:
         return casual

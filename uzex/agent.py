@@ -99,6 +99,10 @@ Short market questions are NOT greetings. Always return SQL:
 - "pul aylantirgan brokerlar" → SUM(deal_sum_uzs) by broker, both sides, no double count
 - "2026 avgust top brokerlar" → COUNT deals in that month only
 - "aksiya" / "акция" → search product_name; 0 rows is correct, do not invent a share price
+- "2026 yil 3-avgust 1$lik shartnoma" is a DATABASE question, never a greeting.
+  Date 2026-08-03, amount 1, currency Доллар США.
+  Search contracts.base_price, deals.deal_sum and unit price. 0 rows is correct if none match.
+  Do not invent a $1 contract. "shartoma" is a typo of shartnoma.
 
 Example hallucination prevention:
 User: "Kompaniya 'SpaceX' ning 2024 yildagi bitimlari qancha?"
@@ -428,6 +432,21 @@ async def answer(question: str, user_id=None):
     if not needs_data or not sql:
         # For greetings, answer helpfully in user's language
         if not sql:
+            try:
+                from .heuristic import looks_like_market
+                if looks_like_market(question):
+                    if lang == "uz":
+                        return (
+                            "Bu birja savoli, lekin aniq SQL tuza olmadim. "
+                            "Sana, summa va valyutani yozing. Masalan: 2026-08-03, 1 dollarlik shartnoma. "
+                            "Raqam to'qilmaydi."
+                        )
+                    return (
+                        "Это вопрос к бирже, но точный SQL не собрался. "
+                        "Напишите дату, сумму и валюту, например: 2026-08-03, контракт на 1 доллар."
+                    )
+            except Exception as e:
+                print(f"market guard: {e}")
             # Try to use LLM to answer directly without DB
             if lang == "uz":
                 return "Salom! Men UZEX birja ma'lumotlari bo'yicha AI yordamchiman. Savol bering, masalan:\n• 2024-yilda eng ko'p bitim qilgan broker kim?\n• STIR 123456789 bo'yicha jami savdo hajmi qancha?\n• Sement mahsuloti bo'yicha eng qimmat bitim qaysi?\n\nSavolingizni yozing — men bazadan aniq javob topib, hisob-kitobi bilan ko'rsataman."
