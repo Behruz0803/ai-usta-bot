@@ -4,6 +4,10 @@
     "api/webhook.py": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/usta.py": {
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "rewrites": [
