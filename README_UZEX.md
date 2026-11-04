@@ -96,7 +96,7 @@ python scripts/test_queries.py
 ```
 
 ### 5-qadam: Topshirish materiallari (Google Forma)
-1. **Prototip havolasi:** Telegram `@ai_usta_bot` + Web `https://uzex-ai-agent.vercel.app` (yoki ngrok URL)
+1. **Prototip havolasi:** Telegram `@uzexaihackaton_bot` + Web `https://ai-usta-bot-omega.vercel.app` (yoki ngrok URL)
 2. **Jamoa ro'yxati** (qo'lda to'ldiriladi)
 3. **Yechim tavsifi:** ushbu fayl + `uzex/schema.py` + arxitektura diagrammasi
 
@@ -179,6 +179,6 @@ Tayyor bo'lsangiz: `python scripts/test_queries.py` ni ishga tushirib, keyin Goo
 Behruz Mahramqulov — UZEX AI Hackathon jamoasi  
 Repo: `Behruz0803/ai-usta-bot` (branch `arena/ced752f8-ai-usta-bot`)  
 Baza: `uzex_spot_data.zip` (26 MB) → `data/uzex.db` (330 MB)  
-Bot: `@ai_usta_bot` (TELEGRAM_TOKEN sozlangach)  
+Bot: `@uzexaihackaton_bot` (alohida token; ta'mir boti bilan ulanmagan)  
 Web: `web/app.py` (FastAPI)
 

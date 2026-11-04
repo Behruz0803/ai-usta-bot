@@ -42,7 +42,11 @@ from telegram.ext import ApplicationBuilder  # noqa: E402
 import bot as bot_module  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ai-usta.webhook")
+logger = logging.getLogger("uzex.webhook")
+
+
+class WrongBotError(RuntimeError):
+    """Token shu deploy kutilgan botga tegishli emas. Javob yuborilmaydi."""
 
 
 def _token():
@@ -69,11 +73,28 @@ _lock = threading.Lock()
 _seen = deque(maxlen=1024)
 
 
+async def _identity_ok(app):
+    """Shu deploy faqat o'z botiga javob bersin. Boshqa token bo'lsa webhook qo'yilmaydi."""
+    me = await app.bot.get_me()
+    expected = (getattr(bot_module, "EXPECTED_BOT_USERNAME", "") or "").lstrip("@")
+    if expected and (me.username or "") != expected:
+        logger.error(
+            "Webhook o'rnatilmadi: token @%s ga tegishli, kutilgan @%s",
+            me.username, expected,
+        )
+        return False
+    return True
+
+
 async def _build_and_init():
     app = ApplicationBuilder().token(_token()).updater(None).build()
     bot_module.register_handlers(app)
     await app.initialize()
     await app.start()
+    if not await _identity_ok(app):
+        await app.stop()
+        await app.shutdown()
+        raise WrongBotError("telegram token boshqa botga tegishli, javob yuborilmaydi")
     await bot_module.post_init(app)          # /start /yangi /yordam buyruqlari
     return app
 
@@ -159,7 +180,9 @@ def _handle(method, path, query, headers, raw_body):
             logger.exception("GET %s xatosi", path)
             return 500, "text/plain", "error (loglarni tekshiring)"
         return 200, "application/json", json.dumps(
-            {"status": "ok", "bot": "ai-usta", "mode": "webhook",
+            {"status": "ok",
+             "bot": getattr(bot_module, "EXPECTED_BOT_USERNAME", "uzex"),
+             "mode": getattr(bot_module, "BOT_MODE", "uzex"),
              "webhook_url": _webhook_url()})
 
     if method != "POST":
@@ -185,6 +208,10 @@ def _handle(method, path, query, headers, raw_body):
 
     try:
         _ensure_ready()
+    except WrongBotError:
+        # 200 — Telegram qayta yubormasin va boshqa botdan javob ketmasin.
+        logger.error("boshqa bot tokeni, update e'tiborsiz qoldirildi")
+        return 200, "text/plain", "ok"
     except Exception:
         # 500 qaytaramiz — Telegram update'ni keyinroq qayta yuboradi
         logger.exception("botni ishga tushirib bo'lmadi (token/env tekshiring)")

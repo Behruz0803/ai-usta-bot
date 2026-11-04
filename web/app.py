@@ -116,7 +116,7 @@ a{color:#5fd06e}
     <p style="font-size:13px;color:#9bb">Baza: <span class="badge">500k bitim</span> <span class="badge">6.6k shartnoma</span> <span class="badge">14k kompaniya</span> <span class="badge">120 broker</span></p>
     <p style="font-size:13px">Arxitektura: <b>Text-to-SQL + SQLite + FTS5 + Gemini</b> • Har savol → deterministik SELECT • 0 qator bo'lsa → <code>Ma'lumotlar bazasida bunday ma'lumot mavjud emas</code> (diskvalifikatsiyadan himoya)</p>
     <p style="font-size:13px">Formulalar: <code>Hajm = Soni × Lot</code> • <code>Birlik narxi = Summa ÷ (Soni × Lot)</code> • <code>Eksport USD→so'm = Summa × kurs</code></p>
-    <p style="font-size:12px;color:#6a8">Telegram bot ham mavjud: <a href="https://t.me/ai_usta_bot" target="_blank">@ai_usta_bot</a> (agar sozlangan bo'lsa)</p>
+    <p style="font-size:12px;color:#6a8">Telegram bot: <a href="https://t.me/uzexaihackaton_bot" target="_blank">@uzexaihackaton_bot</a></p>
   </div>
   <div class="footer">UZEX AI Hackathon — 5 noyabr 18:00 gacha • Prototip sifatiga 20 ball: SQL + manba ko'rsatilgan</div>
 </div>

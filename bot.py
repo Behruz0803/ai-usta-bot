@@ -31,6 +31,17 @@ except Exception as e:
 
 load_dotenv()
 
+# Bir jarayon — bitta bot. UZEX va ta'mir ustasi bir-biriga ulanmaydi.
+# BOT_MODE=uzex  -> faqat birja (shu deploy, @uzexaihackaton_bot)
+# BOT_MODE=usta  -> faqat ta'mir (boshqa token, boshqa manzil; bu yerda yoqilmagan)
+BOT_MODE = os.getenv("BOT_MODE", "uzex").strip().lower()
+IS_USTA = BOT_MODE == "usta"
+IS_UZEX = not IS_USTA
+EXPECTED_BOT_USERNAME = os.getenv(
+    "EXPECTED_BOT_USERNAME",
+    "ai_usta_bot" if IS_USTA else "uzexaihackaton_bot",
+).lstrip("@")
+
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -66,15 +77,19 @@ BTN_DBSTATS = "📊 Baza statistikasi"
 buyurtma_kutilmoqda = set()
 
 def klaviatura():
-    return ReplyKeyboardMarkup(
-        [
+    if IS_USTA:
+        rows = [
+            [KeyboardButton(BTN_YANGI), KeyboardButton(BTN_YORDAM)],
+            [KeyboardButton(BTN_JOY, request_location=True)],
+        ]
+    else:
+        rows = [
             [KeyboardButton(BTN_YANGI), KeyboardButton(BTN_YORDAM)],
             [KeyboardButton(BTN_TOP_BROKER), KeyboardButton(BTN_EXPORT)],
             [KeyboardButton(BTN_CEMENT), KeyboardButton(BTN_DBSTATS)],
-            [KeyboardButton(BTN_JOY, request_location=True)],
-        ],
-        resize_keyboard=True
-    )
+            [KeyboardButton(BTN_UZEX_EXAMPLES)],
+        ]
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 def telefon_klaviatura():
     return ReplyKeyboardMarkup(
@@ -244,6 +259,8 @@ async def buyurtma_yubor(context: ContextTypes.DEFAULT_TYPE, update: Update, pho
     )
 
 async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_id: str, kengaytma: str, tur: str, izoh: str = ""):
+    if IS_UZEX:
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     user_id = update.effective_user.id
     user_str = user_info(update)
     chat_id = update.effective_chat.id
@@ -284,6 +301,12 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = query.from_user.id
     data = query.data
     chat_id = query.message.chat_id if query.message else update.effective_chat.id
+
+    if IS_UZEX and data in {
+        "btn_xavfsizlik_ok", "btn_ustani_chaqirish", "btn_usta_topish", "btn_zapchast_narxi",
+    }:
+        await query.answer()
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
 
     if data == "btn_xavfsizlik_ok":
         await query.answer(text="Ajoyib! Endi xavfsiz holda ta'mirlashni davom ettirishingiz mumkin. ✅", show_alert=True)
@@ -357,7 +380,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await query.message.reply_text(
                 "🔄 *Suhbat tarixi tozalandi!*\n\n"
-                "Yangi savol bering — UZEX birjasi yoki texnika nosozligi haqida. Men tayyorman! 🔧",
+                "Yangi UZEX savolini yozing. Men tayyorman.",
                 parse_mode="Markdown",
                 reply_markup=klaviatura()
             )
@@ -381,6 +404,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await handle_uzex_query(update, context, "Sement bo'yicha eng qimmat bitim qaysi 2023 yilda?")
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if IS_UZEX:
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     if not update.message or not update.message.contact:
         return
     phone = update.message.contact.phone_number
@@ -390,30 +415,38 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════
 # MATNLAR
 # ═══════════════════════════════════════
-SALOM = """
-🔧 *UZEX AI Agent + AI Usta* — sizning aqlli yordamchingiz!
+NOT_UZEX = (
+    "Bu bot faqat UZEX birja savollariga javob beradi: bitim, broker, STIR, narx, eksport.\n\n"
+    "Maishiy texnika va ta'mir bu botga tegishli emas. Savolni birja bo'yicha yozing.\n\n"
+    "Этот бот отвечает только на вопросы по бирже UZEX."
+)
 
-Men *2 sohada* yordam beraman:
+SALOM_UZEX = """
+📈 *UZEX AI Agent* — O'zbekiston Tovar-Xomashyo Birjasi bo'yicha yordamchi.
 
-*📈 UZEX Birja (500 ming bitim, 2022-2026):*
-• Har qanday bitim, narx, broker, kompaniya bo'yicha aniq javob
-• STIR/INN, broker kodi, tovar nomi bo'yicha qidiruv
-• Eksport/Import, eng qimmat/arzon, statistika
-• *Har javobda SQL va hisob-kitobni ko'rsataman* (hakamlar uchun 20 ball!)
+Men *faqat birja savollariga* javob beraman (500 ming bitim, 2022–2026):
+• bitim, narx, broker, kompaniya, STIR/INN
+• eksport, eng qimmat/arzon, statistika
+• har javobda SQL va hisob-kitob
 
-*🛠 Maishiy texnika ustasi:*
-• Muzlatgich, televizor, kir mashinasi, kompyuter...
-• Rasm/ovoz/video orqali tashxis
-
-*💡 UZEX savol namunalari (bosib ko'ring yoki yozing):*
+*Namunalar:*
 _\"2024 yilda eng ko'p bitim qilgan broker kim?\"_
 _\"STIR 921912462 bo'yicha jami savdo qancha?\"_
-_\"Sement eng qimmat qachon sotilgan 2023 yilda?\"_
 _\"Экспортные сделки в 2024 сумма в сумах?\"_
-_\"BK001 brokeri nechta bitimda ishtirok etgan?\"_
 
-O'zbek va rus tillarini mukammal tushunaman! 👇
+O'zbek va rus tillarini tushunaman. Ta'mir va maishiy texnika savollari bu botga tegishli emas.
 """
+
+SALOM_USTA = """
+🔧 *AI Usta* — maishiy texnika va elektronika bo'yicha yordamchi.
+
+Muzlatgich, televizor, kir mashinasi, kompyuter va boshqa qurilmalar.
+Muammoni matn, rasm, ovoz yoki video bilan yuboring.
+
+Birja va UZEX savollari bu botga tegishli emas.
+"""
+
+SALOM = SALOM_UZEX if IS_UZEX else SALOM_USTA
 
 YORDAM = """
 📖 *UZEX AI Agent — Qanday foydalanish kerak*
@@ -429,22 +462,17 @@ Yozing, men bazadan (500 ming bitim) aniq topib beraman:
 
 Til: O'zbek (lotin/krill) va Rus — har ikkalasida ham tushunaman.
 
-*Muhim qoida (hakamlar talabi):*
+*Muhim qoida:*
 Agar ma'lumot bazada yo'q bo'lsa, men *to'qimayman*, aniq aytaman:
 _\"Ma'lumotlar bazasida bunday ma'lumot mavjud emas\"_
-Bu sizning 60 ballingizni himoya qiladi!
 
-*Javob formati (20 ballik sifat):*
+*Javob formati:*
 ✅ Jadval + SQL so'rovi + hisob-kitob formulasi
 • Hajm = Soni × Lot
 • Birlik narxi = Summa ÷ (Soni × Lot)
 • Eksport USD→so'm = Summa × kurs (usd_rates)
 
-━━━━━━━━━━━━━━━━━━━━
-
-*Texnika ustasi (2-darajali):*
-Rasm, ovoz, video yuboring — tashxis qilaman.
-Xavfli holatda (tok, tutun) birinchi ogohlantiraman!
+Bu bot maishiy texnika va ta'mir savollariga javob bermaydi.
 
 *Buyruqlar:*
 /start — Boshlash
@@ -492,6 +520,12 @@ def is_uzex_query(text: str) -> bool:
     return False
 
 async def handle_uzex_query(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str):
+    if IS_USTA:
+        return await xavfsiz_reply(
+            update,
+            "Bu bot faqat ta'mir savollariga javob beradi. Birja savollari bu botga tegishli emas.",
+            reply_markup=klaviatura(),
+        )
     user_id = update.effective_user.id
     user_str = user_info(update)
     chat_id = update.effective_chat.id
@@ -530,7 +564,7 @@ async def yangi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buyurtma_kutilmoqda.discard(user_id)
     msg = (
         "🔄 *Yangi so'rov boshlandi!*\n\n"
-        "UZEX savolingizni yozing yoki texnika muammosini ayting 👇"
+        "UZEX savolingizni yozing 👇" if IS_UZEX else "Texnika muammosini yozing 👇"
     )
     if update.message:
         try:
@@ -611,15 +645,15 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_str = user_info(update)
     chat_id = update.effective_chat.id
 
-    if user_id in buyurtma_kutilmoqda and matn and not matn.startswith("/"):
+    if IS_USTA and user_id in buyurtma_kutilmoqda and matn and not matn.startswith("/"):
         chiroyli_log(user_str, "📱 MATNLI TELEFON RAQAM", matn)
         return await buyurtma_yubor(context, update, matn)
 
-    # Check if UZEX query
-    if UZEX_ENABLED and is_uzex_query(matn):
-        return await handle_uzex_query(update, context, matn)
+    if IS_UZEX:
+        if UZEX_ENABLED and is_uzex_query(matn):
+            return await handle_uzex_query(update, context, matn)
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
 
-    # Fallback to AI Usta (general)
     chiroyli_log(user_str, "✍️ MATN", matn)
     await guruhga_yubor(context, user_str, "✍️ MATN", matn)
     await xavfsiz_typing(context, chat_id, action=ChatAction.TYPING)
@@ -678,6 +712,8 @@ async def fayl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await media_ishla(update, context, doc.file_id, kengaytma, tur, izoh)
 
 async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if IS_UZEX:
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     user_id = update.effective_user.id
     loc = update.message.location
     user_str = user_info(update)
@@ -698,18 +734,47 @@ async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await xavfsiz_reply(update, "⚠️ Xatolik yuz berdi. Shahringiz nomini yozib yuboring.")
 
 async def boshqa_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if IS_UZEX:
+        return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     await xavfsiz_reply(update, "🤔 Bu turdagi xabarni tushunmayman.\n\nMenga quyidagilarni yuboring:\n✍️ Matn  📸 Rasm  🎤 Ovoz  🎬 Video  📍 Joylashuv\n\nYordam uchun /yordam")
 
 # ═══════════════════════════════════════
 # ISHGA TUSHIRISH
 # ═══════════════════════════════════════
 async def post_init(app: Application):
+    me = await app.bot.get_me()
+    if EXPECTED_BOT_USERNAME and (me.username or "") != EXPECTED_BOT_USERNAME:
+        logger.error(
+            "Noto'g'ri bot: @%s, kutilgan @%s. Buyruqlar o'rnatilmaydi.",
+            me.username, EXPECTED_BOT_USERNAME,
+        )
+        return
+    if IS_UZEX:
+        await app.bot.set_my_commands([
+            BotCommand("start", "Boshlash"),
+            BotCommand("yangi", "Yangi UZEX savoli"),
+            BotCommand("yordam", "Yordam"),
+            BotCommand("dbstats", "Baza statistikasi"),
+            BotCommand("misol", "Namuna savol"),
+        ])
+        try:
+            await app.bot.set_my_short_description(
+                short_description="Faqat UZEX birja savollari. Ta'mir boti emas."
+            )
+            await app.bot.set_my_description(
+                description=(
+                    "UZEX Tovar-Xomashyo Birjasi bo'yicha savollarga javob beraman "
+                    "(2022–2026). Bitim, broker, STIR, narx va eksport. "
+                    "Maishiy texnika va ta'mir bu botga tegishli emas."
+                )
+            )
+        except Exception:
+            logger.exception("Bot tavsifi yangilanmadi")
+        return
     await app.bot.set_my_commands([
-        BotCommand("start", "🚀 Boshlash | Start"),
-        BotCommand("yangi", "🔄 Yangi so'rov"),
-        BotCommand("yordam", "❓ Yordam | Помощь"),
-        BotCommand("dbstats", "📊 Baza statistikasi"),
-        BotCommand("misol", "💡 Namuna savol"),
+        BotCommand("start", "Boshlash"),
+        BotCommand("yangi", "Yangi muammo"),
+        BotCommand("yordam", "Yordam"),
     ])
 
 def register_handlers(app: Application) -> Application:
@@ -737,7 +802,7 @@ def main():
     if not token:
         print("❌ TELEGRAM_TOKEN o'rnatilmagan! .env faylni tekshiring (.env.example ga qarang).")
         return
-    print("🤖 UZEX AI Agent + AI Usta bot ishga tushmoqda (polling)...")
+    print(f"🤖 BOT_MODE={BOT_MODE} kutilgan=@{EXPECTED_BOT_USERNAME}")
     if UZEX_ENABLED:
         try:
             dbp = get_db_path()
