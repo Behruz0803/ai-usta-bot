@@ -13,23 +13,17 @@ _client = None
 
 
 def get_client():
-    """Gemini client'ni dangasa (lazy) yaratish.
-
-    Avval client import vaqtida yaratilardi — GEMINI_API_KEY bo'lmasa
-    modul importi qulab, Vercel funksiyasi umuman ishga tushmasdi.
-    Endi client birinchi so'rovda yaratiladi va keshlanadi.
-    """
+    """AI Usta o'z Gemini kalitini ishlatadi. UZEX kalitiga tushmaydi."""
     global _client
     if _client is None:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("USTA_GEMINI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError(
-                "GEMINI_API_KEY o'rnatilmagan! Vercel → Project → Settings → "
-                "Environment Variables bo'limiga qo'shing."
+                "USTA_GEMINI_API_KEY o'rnatilmagan. AI Usta va UZEX kalitlari alohida."
             )
         _client = genai.Client(
             api_key=api_key,
-            http_options={"timeout": 180000},  # 180 soniya
+            http_options={"timeout": 120000},
         )
     return _client
 
@@ -170,7 +164,8 @@ async def media_javob(user_id, fayl_path, izoh="", fayl_turi="rasm"):
 
     # Oldingi suhbat tarixi + joriy media fayl
     contents = get_tarix(user_id) + [media_xabar]
-    need_search = qidiruv_kerakmi(izoh, user_id)
+    # Video/ovozda qidiruvni yoqmaslik — u javobni sekinlashtirib, timeout qiladi.
+    need_search = False if fayl_turi in ("video", "ovoz") else qidiruv_kerakmi(izoh, user_id)
 
     javob = await ai_sorov(user_id, contents, qidiruv=need_search)
     ai_javobi = javob.text or "⚠️ Bo'sh javob keldi. Qayta yuborib ko'ring."

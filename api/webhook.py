@@ -167,7 +167,17 @@ async def _build_usta():
     token = _usta_token()
     if not token or token.split(":", 1)[0] != str(bot_module.USTA_BOT_ID):
         raise WrongBotError("USTA_TELEGRAM_TOKEN AI Usta botiga tegishli emas")
-    app = ApplicationBuilder().token(token).updater(None).build()
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .updater(None)
+        .connect_timeout(20)
+        .read_timeout(90)
+        .write_timeout(90)
+        .pool_timeout(20)
+        .media_write_timeout(120)
+        .build()
+    )
     bot_module.register_handlers(app)
     await app.initialize()
     await app.start()
@@ -291,7 +301,7 @@ def _handle_usta(method, path, query, headers, raw_body):
             await _usta_app.process_update(update)
 
     try:
-        _run(_run_update())
+        _run(_run_update(), timeout=240)
     except Exception:
         logger.exception("usta update xatosi, update_id=%s", update_id)
     return 200, "text/plain", "ok"

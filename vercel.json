@@ -2,11 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/webhook.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "memory": 1024
     },
     "api/usta.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "memory": 1024
     }
   },

@@ -37,9 +37,9 @@ _client = None
 def get_client():
     global _client
     if _client is None:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = (os.getenv("UZEX_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set. Add to .env or Vercel env.")
+            raise RuntimeError("UZEX_GEMINI_API_KEY not set. Add to .env or Vercel env.")
         _client = genai.Client(api_key=api_key, http_options={"timeout": 180000})
     return _client
 

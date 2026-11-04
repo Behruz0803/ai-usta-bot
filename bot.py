@@ -288,10 +288,16 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
     await xavfsiz_typing(context, chat_id, action=action)
     path = None
     try:
-        fayl = await context.bot.get_file(fayl_id)
+        if tur == "video":
+            await xavfsiz_reply(update, "🎬 Video qabul qilindi. Tahlil qilinmoqda, biroz kuting.")
+        fayl = await context.bot.get_file(
+            fayl_id, read_timeout=90, write_timeout=90, connect_timeout=20, pool_timeout=20,
+        )
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{kengaytma}") as tmp:
             path = tmp.name
-        await fayl.download_to_drive(path)
+        await fayl.download_to_drive(
+            path, read_timeout=120, write_timeout=120, connect_timeout=20, pool_timeout=20,
+        )
         logger.info(f"💾 Vaqtinchalik fayl saqlandi: {path}")
         tur_emoji = {"rasm": "📸 RASM", "ovoz": "🎤 OVOZ", "video": "🎬 VIDEO"}
         await guruhga_yubor(context, user_str, tur_emoji.get(tur, tur), izoh, path)
@@ -302,7 +308,14 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
         await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.error(f"{tur} xatosi: {e}")
-        await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+        xato = str(e).lower()
+        if "timed out" in xato or "timeout" in xato:
+            await xavfsiz_reply(
+                update,
+                "⚠️ Video tahlili vaqtida uzildi. Qisqaroq video (15–20 soniya) yoki nosoz joyning rasmini yuboring.",
+            )
+        else:
+            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
     finally:
         if path and os.path.exists(path):
             try:
