@@ -121,7 +121,8 @@ Use deals_enriched when question asks for sum in UZS / сўмда / в сума�
 - NEVER invent INN, company name, product name, broker code — only use LIKE / FTS that will return 0 rows if not exists.
 - Dates: user may say "2024 йил", "2024-yilda", "в 2024 году" → translate to WHERE deal_date BETWEEN '2024-01-01' AND '2024-12-31' or strftime('%Y', deal_date)='2024'
 - Regions may be in Uzbek Latin (viloyati) or Russian (область) — use LIKE '%Toshkent%' or '%Ташкент%'
-- Product names are dirty: same product written differently ("1 сорт" vs "1-сорт", with/without "Марка", upper/lower). Always use LIKE '%цемент%' COLLATE NOCASE or FTS.
+- Product names are dirty: same product written differently ("1 сорт" vs "1-сорт", with/without "Марка", upper/lower). COLLATE NOCASE does NOT fold Cyrillic. Use ufold(product_name) LIKE ufold('%цемент%'). Paxta yog'i is 'Хлопковое масло' OR 'Масло хлопковое', never '%пахта%йог%'.
+- Names and regions use Unicode apostrophe ‘ (U+2018): Farg‘ona, Mo‘jotat. Search with '%Farg%ona%' / '%Mo%jotat%', not ASCII-only apostrophe.
 - Quantity * Lot = volume, Sum / (Quantity*Lot) = unit price — show formula in answer footer.
 - For "самый дорогой / eng qimmat" use ORDER BY unit_price DESC LIMIT 1, for "самый дешевый" ASC.
 - For aggregations: COUNT, SUM, AVG, MIN, MAX, GROUP BY. Always handle NULL payment_date/delivery_date (Аннулирован deals).
@@ -142,13 +143,15 @@ FEW_SHOT_EXAMPLES = """
    SQL: SELECT SUM(d.deal_sum) AS total FROM deals d WHERE d.buyer_inn = '123456789' AND d.deal_date BETWEEN '2024-01-01' AND '2024-12-31' AND d.deal_status != 'Аннулирован(Не оплачен)';
 
 2. Вопрос (RU): "Какой брокер провел больше всего сделок в 2025 году?"
-   SQL: SELECT seller_broker AS broker, COUNT(*) AS cnt FROM deals WHERE deal_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY seller_broker ORDER BY cnt DESC LIMIT 1;
+   SQL: SELECT b.name, b.broker_code, COUNT(*) AS total_deals FROM deals d JOIN brokers b ON b.broker_code = d.seller_broker OR b.broker_code = d.buyer_broker WHERE d.deal_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY b.broker_code, b.name ORDER BY total_deals DESC LIMIT 1;
+   Не используй UNION ALL — если брокер и продавец, и покупатель в одной сделке, UNION ALL посчитает её дважды. OR в JOIN считает сделку один раз.
 
 3. Вопрос (RU): "Самая дорогая сделка по цементу в 2023 году — цена за тонну?"
    SQL: SELECT deal_id, deal_date, product_name, (deal_sum / (quantity * lot)) AS unit_price, deal_sum, quantity, lot, unit FROM deals WHERE product_name LIKE '%цемент%' COLLATE NOCASE AND deal_date BETWEEN '2023-01-01' AND '2023-12-31' ORDER BY unit_price DESC LIMIT 5;
 
-4. Вопрос (UZ): "Paxta yog'i bo'yicha 2025 yilda eng arzon va eng qimmat shartnoma qaysi?"
-   SQL: SELECT deal_id, product_name, (deal_sum/(quantity*lot)) AS unit_price FROM deals WHERE product_name LIKE '%пахта%йог%' COLLATE NOCASE OR product_name LIKE '%хлопков%масло%' COLLATE NOCASE AND deal_date BETWEEN '2025-01-01' AND '2025-12-31' ORDER BY unit_price ASC LIMIT 1; -- затем DESC для дорогого
+4. Вопрос (UZ): "Paxta yog'i bo'yicha 2025 yilda faqat ijro etilgan, tonna hisobida eng arzon VA eng qimmat bitim?"
+   SQL: SELECT deal_id, deal_date, product_name, unit, deal_status, ROUND(deal_sum*1.0/(quantity*lot),2) AS unit_price FROM deals WHERE (ufold(product_name) LIKE ufold('%хлопковое масло%') OR ufold(product_name) LIKE ufold('%масло хлопковое%')) AND ufold(product_name) NOT LIKE ufold('%подсолнеч%') AND ufold(product_name) NOT LIKE ufold('%шрот%') AND unit='тонна' AND deal_status='Исполнен' AND deal_date BETWEEN '2025-01-01' AND '2025-12-31' AND quantity>0 AND lot>0 ORDER BY unit_price ASC LIMIT 1;
+   Затем тот же запрос ORDER BY unit_price DESC LIMIT 1. Имена бывают в двух порядках: 'Хлопковое масло' и 'Масло хлопковое'. '%пахта%йог%' НЕ использовать.
 
 5. Вопрос (RU): "Сколько экспортных сделок было в 2024 году и их сумма в сумах?"
    SQL: SELECT COUNT(*) AS cnt, SUM(de.deal_sum_uzs) AS total_uzs FROM deals_enriched de WHERE de.contract_type='Экспортный' AND de.deal_date BETWEEN '2024-01-01' AND '2024-12-31';

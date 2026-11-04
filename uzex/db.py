@@ -94,6 +94,9 @@ def get_connection(read_only=True):
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA query_only=ON;" if read_only else "PRAGMA query_only=OFF;")
     conn.row_factory = sqlite3.Row
+    # Unicode-aware LIKE. SQLite NOCASE does not fold Cyrillic or ‘ apostrophes.
+    from .textnorm import ufold
+    conn.create_function("ufold", 1, ufold, deterministic=True)
     return conn
 
 # Whitelist for SQL validation

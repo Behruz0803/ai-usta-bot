@@ -20,6 +20,7 @@ from google.genai import types
 
 from .schema import SCHEMA_DESCRIPTION, FEW_SHOT_EXAMPLES
 from .db import execute_sql, is_safe_select
+from .textnorm import prepare_sql, search_hints
 
 load_dotenv()
 
@@ -146,6 +147,8 @@ Talab: Yuqoridagi schema asosida to'g'ri SQLite SELECT so'rovini JSON formatda t
 Требование: Составь корректный SQLite SELECT на основе схемы выше, в формате JSON.
 
 Return ONLY JSON, no markdown, no extra text.
+
+{search_hints(question)}
 """
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
@@ -207,7 +210,7 @@ Return ONLY JSON, no markdown, no extra text.
                 sql = m.group(1).strip()
                 if not sql.endswith(";"):
                     sql += ";"
-                return {"sql": sql, "explanation": "Avtomatik ajratildi", "language": lang_hint, "needs_data": True}
+                return {"sql": sql, "explanation": "Savol bo'yicha bazadan aniq SELECT bajarildi. Raqamlar faqat shu so'rov natijasi.", "language": lang_hint, "needs_data": True}
             # Try heuristic as backup
             from .heuristic import heuristic_sql
             h = heuristic_sql(question)
@@ -258,6 +261,9 @@ def _is_aggregation_no_data(rows, columns, rowcount):
                         return True
             except:
                 pass
+    # MIN/MAX of an empty match returns one row of NULLs — that is not a result
+    if rows and all(row[c] is None for c in columns):
+        return True
     # Check for single-row aggregation where SUM is NULL and COUNT 0
     if "cnt" in [c.lower() for c in columns]:
         for rkey in ["total", "total_sum", "sum", "deal_sum", "total_uzs"]:
@@ -342,16 +348,16 @@ def format_answer(question: str, sql: str, rows, columns, rowcount, error, expla
     # Determine calc basis
     calc_note_uz = """
 **Hisob-kitob va manba:**
-- Hajm = Soni × Lot
-- Birlik narxi = Summa ÷ (Soni × Lot)
-- Eksport (USD) → so'm: Summa × USD kursi (usd_rates, bitim sanasi bo'yicha)
+- Hajm = Soni * Lot
+- Birlik narxi = Summa / (Soni * Lot)
+- Eksport (USD) -> so'm: Summa * USD kursi (usd_rates, bitim sanasi bo'yicha)
 - Manba: deals (bitimlar) + contracts (shartnomalar) + usd_rates + participants/brokers
 """
     calc_note_ru = """
 **Расчёт и источник:**
-- Объём = Количество × Лот
-- Цена за единицу = Сумма ÷ (Количество × Лот)
-- Экспорт (USD) → сум: Сумма × курс USD (usd_rates по дате сделки)
+- Объём = Количество * Лот
+- Цена за единицу = Сумма / (Количество * Лот)
+- Экспорт (USD) -> сум: Сумма * курс USD (usd_rates по дате сделки)
 - Источник: deals + contracts + usd_rates + participants/brokers
 """
 
@@ -361,11 +367,25 @@ def format_answer(question: str, sql: str, rows, columns, rowcount, error, expla
 
     intro = intro_uz if lang == "uz" else intro_ru
 
+    zero_note = ""
+    numeric_vals = []
+    for r in rows:
+        for c in columns:
+            v = r[c]
+            if isinstance(v, (int, float)):
+                numeric_vals.append(v)
+    if numeric_vals and all(v == 0 for v in numeric_vals):
+        zero_note = (
+            "\n\nBu 0 — bazada bunday yozuv yo'q. Raqam to'qib chiqarilmaydi."
+            if lang == "uz"
+            else "\n\nЭто 0: в базе такой записи нет. Число не выдумывается."
+        )
+
     footer = f"\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Izoh:** {explanation}" if lang=="uz" else f"\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Пояснение:** {explanation}"
 
     timing = f"\n\n⏱ {elapsed_ms} ms"
 
-    return f"{intro}\n\n{table_md}{calc_note}{footer}{timing}"
+    return f"{intro}\n\n{table_md}{calc_note}{zero_note}{footer}{timing}"
 
 async def answer(question: str, user_id=None):
     """Main entry: question -> formatted answer (with anti-hallucination)"""
@@ -386,6 +406,9 @@ async def answer(question: str, user_id=None):
                 return "Salom! Men UZEX birja ma'lumotlari bo'yicha AI yordamchiman. Savol bering, masalan:\n• 2024-yilda eng ko'p bitim qilgan broker kim?\n• STIR 123456789 bo'yicha jami savdo hajmi qancha?\n• Sement mahsuloti bo'yicha eng qimmat bitim qaysi?\n\nSavolingizni yozing — men bazadan aniq javob topib, hisob-kitobi bilan ko'rsataman."
             else:
                 return "Привет! Я — UZEX AI-ассистент по данным биржи. Задайте вопрос, например:\n• Какой брокер провел больше всего сделок в 2024 году?\n• Какой товар самый дорогой в 2025?\n• Сколько сделок по ИНН 123456789?\n\nНапишите вопрос — я найду точный ответ в базе с расчётом и источником."
+
+    # Unicode LIKE + known product-name fixes (Cyrillic case, apostrophe, cotton oil)
+    sql = prepare_sql(sql, question)
 
     # Validate SQL safety
     safe, msg = is_safe_select(sql)

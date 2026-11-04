@@ -142,7 +142,7 @@ async def xavfsiz_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, actio
     except Exception as e:
         logger.warning(f"Typing statusini yuborishda xato: {e}")
 
-async def xavfsiz_reply(update: Update, text: str, reply_markup=None):
+async def xavfsiz_reply(update: Update, text: str, reply_markup=None, parse_mode="Markdown"):
     target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
     if not target:
         return
@@ -161,12 +161,12 @@ async def xavfsiz_reply(update: Update, text: str, reply_markup=None):
             parts.append(current)
         for i, part in enumerate(parts):
             try:
-                await target.reply_text(part, parse_mode="Markdown", reply_markup=reply_markup if i==len(parts)-1 else None)
+                await target.reply_text(part, parse_mode=parse_mode, reply_markup=reply_markup if i==len(parts)-1 else None)
             except BadRequest:
                 await target.reply_text(part, reply_markup=reply_markup if i==len(parts)-1 else None)
         return
     try:
-        await target.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await target.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except BadRequest as e:
         logger.warning(f"Markdown parse xatosi, oddiy matnda yuborilmoqda: {e}")
         await target.reply_text(text, reply_markup=reply_markup)
@@ -507,7 +507,9 @@ async def handle_uzex_query(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             await xavfsiz_reply(update, "⏳ Baza ochilmoqda (500 000 bitim). Birinchi savol 15–30 soniya olishi mumkin...")
         javob = await uzex_answer(question, user_id)
         print(f"🤖 UZEX javobi:\n{javob}\n")
-        await xavfsiz_reply(update, javob, reply_markup=inline_uzex_klaviatura())
+        # HTML <pre> — Telegram Markdown '_' ni yeb qo'yardi va SQL buzilib ko'rinardi
+        from uzex.textnorm import as_telegram_html
+        await xavfsiz_reply(update, as_telegram_html(javob), reply_markup=inline_uzex_klaviatura(), parse_mode="HTML")
         await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.exception(f"UZEX xatosi: {e}")
