@@ -1,0 +1,393 @@
+# -*- coding: utf-8 -*-
+"""
+UZEX Text-to-SQL Agent with Anti-Hallucination
+- Uses Gemini to generate SQL from natural language (UZ/RU)
+- Executes SQL safely
+- Formats answer with proof (SQL + calculation)
+- If 0 rows → says no data in user's language (critical for disqualification avoidance)
+
+Designed for hackathon: 10 live questions, 90s per answer, 60+20+20 scoring.
+"""
+import os
+import re
+import json
+import time
+import sqlite3
+from pathlib import Path
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+
+from .schema import SCHEMA_DESCRIPTION, FEW_SHOT_EXAMPLES
+from .db import execute_sql, is_safe_select
+
+load_dotenv()
+
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set. Add to .env or Vercel env.")
+        _client = genai.Client(api_key=api_key, http_options={"timeout": 180000})
+    return _client
+
+# Uzbek/Russian detection heuristic
+def detect_language(text: str) -> str:
+    t = text.lower()
+    # Cyrillic present -> likely Russian (or Uzbek Cyrillic but prompt says questions are RU or UZ latin/cyrillic)
+    # If contains Uzbek latin specific letters like o', g', or words like "va", "uchun", "qancha", "qanday" -> Uzbek
+    uz_markers = ["qancha", "qaysi", "qachon", "kim", "nima", "qayer", "necha", "nechta", "uchun", "bo'yicha", "va ", " yoki ", "necha pul", "narxi", "broker", "bitim", "shartnoma", "xarid", "sotuvchi", "xaridor"]
+    ru_markers = ["сколько", "какой", "когда", "кто", "что", "где", "цена", "сделк", "контракт", "брокер", "покупатель", "продавец", "товар"]
+    # Simple scoring
+    uz_score = sum(1 for w in uz_markers if w in t)
+    ru_score = sum(1 for w in ru_markers if w in t)
+    # Cyrillic check
+    has_cyrillic = bool(re.search(r"[а-яёА-ЯЁ]", text))
+    has_latin_uz = bool(re.search(r"[oʻgʻqҳ]", text.lower())) or "va " in t
+
+    if has_cyrillic and ru_score >= uz_score:
+        return "ru"
+    if uz_score > ru_score:
+        return "uz"
+    # Default to question language detection via LLM? fallback to ru if cyrillic, else uz
+    return "ru" if has_cyrillic else "uz"
+
+SYSTEM_PROMPT = f"""
+Sen — UZEX AI Agent, O'zbekiston Tovar-Xomashyo Birjasi ma'lumotlari bo'yicha mutaxassisan.
+Ты — UZEX AI Agent, эксперт по данным Товарно-сырьевой биржи Узбекистана.
+
+CRITICAL RULES (DISQUALIFICATION RISK):
+- NEVER hallucinate: never invent INN, company name, product name, broker code, price, count.
+- If SQL returns 0 rows → you MUST say in user's language: "Ma'lumotlar bazasida bunday ma'lumot mavjud emas" (UZ) or "В базе данных такой информации нет" (RU). Do NOT make up numbers.
+- Always generate valid SQLite SELECT query. Only SELECT/WITH allowed. No INSERT/UPDATE/DELETE.
+- Use LIKE with COLLATE NOCASE for product names (they are dirty: "1 сорт" vs "1-сорт").
+- For date filters: user says "2024 йилда" / "в 2024 году" → use BETWEEN '2024-01-01' AND '2024-12-31' or strftime('%Y', deal_date)='2024'.
+- For export sums in UZS: JOIN deals -> contracts -> usd_rates, calculate CASE WHEN currency='Доллар США' THEN deal_sum*rate ELSE deal_sum END.
+- For unit price: deal_sum / (quantity * lot). For volume: quantity * lot.
+- Always add LIMIT 100 unless aggregation (COUNT/SUM/AVG...).
+- Respond in user's language (UZ if question is Uzbek, RU if Russian).
+- Output MUST be valid JSON with keys: "sql", "explanation", "language" (uz/ru), "needs_data" (true/false).
+
+{SCHEMA_DESCRIPTION}
+
+{FEW_SHOT_EXAMPLES}
+
+RESPONSE FORMAT (strict JSON):
+{{
+  "sql": "SELECT ...",
+  "explanation": "Qisqa izoh / Краткое объяснение: nima hisoblandi va qaysi formula",
+  "language": "uz" or "ru",
+  "needs_data": true
+}}
+
+If question is unrelated to DB (e.g., "Salom", "Kimsan?") → still try to answer helpfully but set needs_data=false and sql="".
+
+Example hallucination prevention:
+User: "Kompaniya 'SpaceX' ning 2024 yildagi bitimlari qancha?"
+You generate: SELECT ... WHERE p.name LIKE '%SpaceX%' → executes → 0 rows → you answer "Ma'lumotlar bazasida bunday ma'lumot mavjud emas (SpaceX nomi bilan kompaniya topilmadi). [SQL: ...]"
+NEVER say "SpaceX 5 ta bitim qilgan".
+
+Always show SQL and calculation basis in final answer — this is 20 балла за качество прототипа.
+"""
+
+async def generate_sql(question: str) -> dict:
+    """Ask Gemini to generate SQL JSON, with heuristic fallback if no API key / no internet"""
+    lang_hint = detect_language(question)
+    # Try heuristic first if no API key or heuristic can handle quickly and Gemini not reachable
+    api_key = os.getenv("GEMINI_API_KEY")
+    # If no API key, use heuristic directly
+    if not api_key:
+        try:
+            from .heuristic import heuristic_sql
+            h = heuristic_sql(question)
+            if h.get("sql"):
+                return h
+            # If heuristic says needs_data False but question looks like DB query, still try heuristic
+            # Fallback to greeting
+            if not h.get("sql"):
+                return h
+        except Exception as e:
+            print(f"heuristic error: {e}")
+        return {"sql": "", "explanation": "GEMINI_API_KEY o'rnatilmagan — heuristic ishlatildi, lekin mos SQL topilmadi", "language": lang_hint, "needs_data": False}
+
+    # Try heuristic as fast path for common patterns (optional, but keep Gemini as primary)
+    # We will still go to Gemini for accuracy, unless heuristic is confident
+    # Uncomment to prioritize heuristic for speed:
+    # from .heuristic import heuristic_sql
+    # h = heuristic_sql(question)
+    # if h.get("sql"):
+    #     return h
+
+    try:
+        client = get_client()
+    except Exception as e:
+        # fallback to heuristic if client creation fails
+        print(f"Gemini client error, using heuristic: {e}")
+        from .heuristic import heuristic_sql
+        h = heuristic_sql(question)
+        return h
+
+    user_prompt = f"""
+Savol / Вопрос: "{question}"
+
+Til / Язык (auto-detected): {lang_hint}
+Talab: Yuqoridagi schema asosida to'g'ri SQLite SELECT so'rovini JSON formatda tuz.
+Требование: Составь корректный SQLite SELECT на основе схемы выше, в формате JSON.
+
+Return ONLY JSON, no markdown, no extra text.
+"""
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.1,  # low temp for deterministic SQL
+        max_output_tokens=2000,
+    )
+    try:
+        resp = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
+            config=config
+        )
+        text = (resp.text or "").strip()
+        # Clean markdown code fences if present
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            text = text.strip()
+        # Try parse JSON
+        try:
+            data = json.loads(text)
+            # Validate keys
+            if "sql" not in data:
+                # Try extract SQL from text
+                m = re.search(r"SELECT[\s\S]*?;", text, re.IGNORECASE)
+                if m:
+                    data = {"sql": m.group(0), "explanation": data.get("explanation", ""), "language": lang_hint, "needs_data": True}
+                else:
+                    raise ValueError("No sql key")
+            # Normalize
+            data["language"] = data.get("language", lang_hint)
+            if data["language"] not in ("uz", "ru"):
+                data["language"] = lang_hint
+            return data
+        except Exception as e:
+            # Fallback: try to extract SQL via regex
+            print(f"⚠️ JSON parse failed: {e}, raw: {text[:500]}")
+            m = re.search(r"(SELECT[\s\S]+?)(?:;|\n\n|$)", text, re.IGNORECASE)
+            if m:
+                sql = m.group(1).strip()
+                if not sql.endswith(";"):
+                    sql += ";"
+                return {"sql": sql, "explanation": "Avtomatik ajratildi", "language": lang_hint, "needs_data": True}
+            # Try heuristic as backup
+            from .heuristic import heuristic_sql
+            h = heuristic_sql(question)
+            if h.get("sql"):
+                return h
+            return {"sql": "", "explanation": f"SQL yaratishda xato: {e}", "language": lang_hint, "needs_data": False, "error": text[:500]}
+    except Exception as e:
+        print(f"⚠️ Gemini API error, falling back to heuristic: {e}")
+        from .heuristic import heuristic_sql
+        h = heuristic_sql(question)
+        if h.get("sql"):
+            return h
+        return {"sql": "", "explanation": f"Gemini xatosi: {e}", "language": lang_hint, "needs_data": False}
+
+def _is_aggregation_no_data(rows, columns, rowcount):
+    """Detect aggregation that returned 0/NULL as no-data (e.g., COUNT=0, SUM=NULL)"""
+    if rowcount != 1 or not rows:
+        return False
+    row = rows[0]
+    # Check if any count column is 0
+    for col in columns:
+        if col.lower() in ("cnt", "count", "cnt_all", "count(*)", "count(*)"):
+            try:
+                if int(row[col]) == 0:
+                    return True
+            except:
+                pass
+        # Also check generic cnt
+        if "cnt" in col.lower():
+            try:
+                if int(row[col]) == 0:
+                    # If there are other numeric columns that are NULL/0, it's likely no-data
+                    # Check if all other numeric columns are None/0
+                    numeric_cols = [c for c in columns if c not in ("cnt",)]
+                    all_empty = True
+                    for c2 in columns:
+                        v = row[c2]
+                        if v is not None and v != 0:
+                            # If any column has non-zero/non-null besides cnt, it's valid data (e.g., cnt=0 but total=0 is still no-data)
+                            # But if total_sum is not null, then there is data
+                            if isinstance(v, (int, float)) and v != 0:
+                                all_empty = False
+                                break
+                            elif isinstance(v, str) and v.strip() not in ("", "—", "0"):
+                                all_empty = False
+                                break
+                    if all_empty:
+                        return True
+            except:
+                pass
+    # Check for single-row aggregation where SUM is NULL and COUNT 0
+    if "cnt" in [c.lower() for c in columns]:
+        for rkey in ["total", "total_sum", "sum", "deal_sum", "total_uzs"]:
+            for col in columns:
+                if rkey in col.lower():
+                    if row[col] is None:
+                        # If count 0 and sum null -> no data
+                        cnt_val = None
+                        for c in columns:
+                            if "cnt" in c.lower():
+                                cnt_val = row[c]
+                                break
+                        if cnt_val == 0:
+                            return True
+    return False
+
+def format_answer(question: str, sql: str, rows, columns, rowcount, error, explanation, lang, elapsed_ms):
+    """Format final answer with table + proof"""
+    # Language-specific no-data message (critical!)
+    no_data_uz = "Ma'lumotlar bazasida bunday ma'lumot mavjud emas."
+    no_data_ru = "В базе данных такой информации нет."
+
+    # Build header
+    if error:
+        # Check if error is due to SQLite syntax vs empty
+        # If SQL was safe but returned error, inform
+        if "0 rows" in error or rowcount == 0:
+            pass  # handled below
+        else:
+            # SQL execution error
+            if lang == "uz":
+                return f"⚠️ So'rovni bajarishda xato: {error}\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Izoh:** {explanation}\n\n⏱ {elapsed_ms} ms"
+            else:
+                return f"⚠️ Ошибка выполнения запроса: {error}\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Пояснение:** {explanation}\n\n⏱ {elapsed_ms} ms"
+
+    # Also treat aggregation no-data as 0
+    is_agg_empty = _is_aggregation_no_data(rows, columns, rowcount) if rows else False
+    if rowcount == 0 or not rows or is_agg_empty:
+        if lang == "uz":
+            base = f"{no_data_uz}"
+            detail = f"\n\n**Tekshirilgan SQL:**\n```sql\n{sql}\n```\n\n**Izoh:** {explanation}\n\n*Ushbu javob aniq ma'lumotlar bazasi asosida berildi — agar ma'lumot topilmasa, to'qib chiqarilmaydi.*"
+            return base + detail + f"\n\n⏱ {elapsed_ms} ms | 0 qator"
+        else:
+            base = f"{no_data_ru}"
+            detail = f"\n\n**Проверенный SQL:**\n```sql\n{sql}\n```\n\n**Пояснение:** {explanation}\n\n*Ответ основан строго на базе данных — если данных нет, они не выдумываются.*"
+            return base + detail + f"\n\n⏱ {elapsed_ms} ms | 0 строк"
+
+    # Has data: format table
+    # Build markdown table
+    table_md = ""
+    # If few columns and many rows, limit display
+    max_rows_display = 20
+    display_rows = rows[:max_rows_display]
+    
+    # Header
+    table_md += "| " + " | ".join(columns) + " |\n"
+    table_md += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+    for r in display_rows:
+        vals = []
+        for c in columns:
+            v = r[c]
+            if v is None:
+                vals.append("—")
+            elif isinstance(v, float):
+                # Format numbers with space as thousand sep? Use Uzbek style: 1 234 567.89
+                # But keep simple
+                if v > 1000:
+                    vals.append(f"{v:,.2f}".replace(",", " "))
+                else:
+                    vals.append(f"{v:.2f}" if v != int(v) else str(int(v)))
+            else:
+                # Escape pipe
+                s = str(v).replace("|", "\\|")
+                # Truncate long product names
+                if len(s) > 60:
+                    s = s[:57] + "..."
+                vals.append(s)
+        table_md += "| " + " | ".join(vals) + " |\n"
+    if len(rows) > max_rows_display:
+        table_md += f"\n*... va yana {len(rows)-max_rows_display} qator (jami {rowcount}) | ... и ещё {len(rows)-max_rows_display} строк (всего {rowcount})*"
+
+    # Determine calc basis
+    calc_note_uz = """
+**Hisob-kitob va manba:**
+- Hajm = Soni × Lot
+- Birlik narxi = Summa ÷ (Soni × Lot)
+- Eksport (USD) → so'm: Summa × USD kursi (usd_rates, bitim sanasi bo'yicha)
+- Manba: deals (bitimlar) + contracts (shartnomalar) + usd_rates + participants/brokers
+"""
+    calc_note_ru = """
+**Расчёт и источник:**
+- Объём = Количество × Лот
+- Цена за единицу = Сумма ÷ (Количество × Лот)
+- Экспорт (USD) → сум: Сумма × курс USD (usd_rates по дате сделки)
+- Источник: deals + contracts + usd_rates + participants/brokers
+"""
+
+    calc_note = calc_note_uz if lang == "uz" else calc_note_ru
+    intro_uz = f"✅ **Natija ({rowcount} qator):**"
+    intro_ru = f"✅ **Результат ({rowcount} строк):**"
+
+    intro = intro_uz if lang == "uz" else intro_ru
+
+    footer = f"\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Izoh:** {explanation}" if lang=="uz" else f"\n\n**SQL:**\n```sql\n{sql}\n```\n\n**Пояснение:** {explanation}"
+
+    timing = f"\n\n⏱ {elapsed_ms} ms"
+
+    return f"{intro}\n\n{table_md}{calc_note}{footer}{timing}"
+
+async def answer(question: str, user_id=None):
+    """Main entry: question -> formatted answer (with anti-hallucination)"""
+    start = time.time()
+    # Step 1: LLM generates SQL
+    gen = await generate_sql(question)
+    sql = gen.get("sql", "").strip()
+    explanation = gen.get("explanation", "")
+    lang = gen.get("language", detect_language(question))
+    needs_data = gen.get("needs_data", True)
+
+    # If LLM says no data needed (greeting etc.), return direct answer
+    if not needs_data or not sql:
+        # For greetings, answer helpfully in user's language
+        if not sql:
+            # Try to use LLM to answer directly without DB
+            if lang == "uz":
+                return "Salom! Men UZEX birja ma'lumotlari bo'yicha AI yordamchiman. Savol bering, masalan:\n• 2024-yilda eng ko'p bitim qilgan broker kim?\n• STIR 123456789 bo'yicha jami savdo hajmi qancha?\n• Sement mahsuloti bo'yicha eng qimmat bitim qaysi?\n\nSavolingizni yozing — men bazadan aniq javob topib, hisob-kitobi bilan ko'rsataman."
+            else:
+                return "Привет! Я — UZEX AI-ассистент по данным биржи. Задайте вопрос, например:\n• Какой брокер провел больше всего сделок в 2024 году?\n• Какой товар самый дорогой в 2025?\n• Сколько сделок по ИНН 123456789?\n\nНапишите вопрос — я найду точный ответ в базе с расчётом и источником."
+
+    # Validate SQL safety
+    safe, msg = is_safe_select(sql)
+    if not safe:
+        elapsed = int((time.time()-start)*1000)
+        if lang == "uz":
+            return f"⚠️ SQL xavfsizlik tekshiruvidan o'tmadi: {msg}\n\n**Yaratilgan SQL:**\n```sql\n{sql}\n```\n⏱ {elapsed} ms"
+        else:
+            return f"⚠️ SQL не прошёл проверку безопасности: {msg}\n\n**Сгенерированный SQL:**\n```sql\n{sql}\n```\n⏱ {elapsed} ms"
+
+    # Step 2: Execute SQL
+    rows, columns, rowcount, error = execute_sql(sql, limit=100)
+
+    elapsed = int((time.time()-start)*1000)
+
+    # Step 3: Format with anti-hallucination
+    # If error is truncation note, it's not fatal
+    if error and "truncated" in error.lower():
+        # Still has rows, show warning
+        formatted = format_answer(question, sql, rows, columns, rowcount, None, explanation, lang, elapsed)
+        formatted += f"\n\n⚠️ *{error}*"
+        return formatted
+    elif error:
+        return format_answer(question, sql, rows, columns, rowcount, error, explanation, lang, elapsed)
+    else:
+        return format_answer(question, sql, rows, columns, rowcount, None, explanation, lang, elapsed)
+
+# Sync wrapper for testing
+def answer_sync(question: str):
+    import asyncio
+    return asyncio.run(answer(question))

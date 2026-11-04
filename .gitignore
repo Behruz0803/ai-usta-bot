@@ -6,3 +6,8 @@ __pycache__/
 .venv/
 venv/
 .vercel/
+data/uzex.db
+data/*.db
+*.db
+*.sqlite
+google_drive/
