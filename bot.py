@@ -18,7 +18,8 @@ from telegram.ext import (
 )
 from user_store import save_user
 from ai_engine import (
-    matn_javob, media_javob, tarixni_tozala, set_joylashuv, get_joylashuv, get_tarix
+    matn_javob, media_javob, tarixni_tozala, set_joylashuv, get_joylashuv, get_tarix,
+    GeminiQuotaError,
 )
 # UZEX integration
 try:
@@ -56,13 +57,41 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════
 # GURUH ID RAQAMINI PARSING QILISH
 # ═══════════════════════════════════════
-LOG_CHAT_ID_STR = os.getenv("LOG_CHAT_ID")
-LOG_CHAT_ID = None
-if LOG_CHAT_ID_STR:
+def _chat_id(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
     try:
-        LOG_CHAT_ID = int(LOG_CHAT_ID_STR)
+        return int(raw)
     except ValueError:
-        LOG_CHAT_ID = LOG_CHAT_ID_STR
+        return raw
+
+
+LOG_CHAT_ID = _chat_id(os.getenv("LOG_CHAT_ID"))
+
+
+def usta_log_chat_id():
+    """AI Usta mijoz xabarlari. Alohida guruh bo'lsa USTA_LOG_CHAT_ID, aks holda LOG_CHAT_ID."""
+    return _chat_id(os.getenv("USTA_LOG_CHAT_ID")) or _chat_id(os.getenv("LOG_CHAT_ID")) or LOG_CHAT_ID
+
+
+def log_chat_id():
+    if in_usta_mode():
+        return usta_log_chat_id()
+    return _chat_id(os.getenv("LOG_CHAT_ID")) or LOG_CHAT_ID
+
+
+def mijoz_xato(exc) -> str:
+    """Mijozga xom API JSON ko'rsatilmaydi."""
+    if isinstance(exc, GeminiQuotaError) or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+        return (
+            "⚠️ Hozircha javob bera olmadim. AI xizmati limiti vaqtincha tugagan. "
+            "Bir necha daqiqadan so'ng qayta yozing."
+        )
+    matn = str(exc).lower()
+    if "timed out" in matn or "timeout" in matn:
+        return "⚠️ Javob vaqtida uzildi. Qisqaroq yozing yoki 15–20 soniyalik video yuboring."
+    return "⚠️ Xatolik yuz berdi. Qayta yozib ko'ring."
 
 MAX_MEDIA = 20 * 1024 * 1024  # 20 MB
 
@@ -207,43 +236,59 @@ async def xavfsiz_reply(update: Update, text: str, reply_markup=None, parse_mode
         logger.error(f"Xabar yuborishda kutilmagan xatolik: {e}")
         await target.reply_text(text, reply_markup=reply_markup)
 
-async def guruhga_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, tur: str, matn: str = "", fayl_path: str = None):
-    if in_usta_mode():
-        return
-    if not LOG_CHAT_ID:
+async def guruhga_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, tur: str, matn: str = "", fayl_path: str = None, message=None):
+    chat = log_chat_id()
+    if not chat:
+        logger.warning("Log chat sozlanmagan, mijoz xabari yuborilmadi")
         return
     try:
-        caption = f"👤 {user_str}\n📨 {tur}"
+        belgi = "🔧 AI Usta" if in_usta_mode() else "📈 UZEX"
+        caption = f"{belgi}\n👤 {user_str}\n📨 {tur}"
         if matn:
             qisqa = matn[:800] + "..." if len(matn) > 800 else matn
             caption += f"\n💬 {qisqa}"
+        if message is not None:
+            await context.bot.send_message(chat, caption[:1000])
+            try:
+                await context.bot.copy_message(
+                    chat_id=chat,
+                    from_chat_id=message.chat_id,
+                    message_id=message.message_id,
+                )
+                return
+            except Exception as copy_err:
+                logger.warning("Asl xabarni nusxalab bo'lmadi, fayl yuboriladi: %s", copy_err)
+                if not (fayl_path and os.path.exists(fayl_path)):
+                    return
         if fayl_path and os.path.exists(fayl_path):
             with open(fayl_path, "rb") as f:
                 if fayl_path.endswith((".jpg", ".jpeg", ".png")):
-                    await context.bot.send_photo(LOG_CHAT_ID, photo=f, caption=caption)
+                    await context.bot.send_photo(chat, photo=f, caption=caption[:1000])
                 elif fayl_path.endswith(".ogg"):
-                    await context.bot.send_voice(LOG_CHAT_ID, voice=f, caption=caption)
+                    await context.bot.send_voice(chat, voice=f, caption=caption[:1000])
                 elif fayl_path.endswith((".mp4", ".mov")):
-                    await context.bot.send_video(LOG_CHAT_ID, video=f, caption=caption)
+                    await context.bot.send_video(chat, video=f, caption=caption[:1000])
                 elif fayl_path.endswith(".mp3"):
-                    await context.bot.send_audio(LOG_CHAT_ID, audio=f, caption=caption)
+                    await context.bot.send_audio(chat, audio=f, caption=caption[:1000])
                 else:
-                    await context.bot.send_document(LOG_CHAT_ID, document=f, caption=caption)
+                    await context.bot.send_document(chat, document=f, caption=caption[:1000])
         else:
-            await context.bot.send_message(LOG_CHAT_ID, caption)
+            await context.bot.send_message(chat, caption[:4000])
     except Exception as e:
-        logger.warning(f"Admin guruhiga yuborishda xato: {e}")
+        logger.warning("Admin guruhiga yuborishda xato (chat=%s): %s", chat, e)
 
 async def ai_javobini_yubor(context: ContextTypes.DEFAULT_TYPE, javob: str):
-    if not LOG_CHAT_ID:
+    chat = log_chat_id()
+    if not chat:
         return
     try:
-        matn = f"🤖 AI javobi:\n{javob}"
+        belgi = "🔧 AI Usta" if in_usta_mode() else "📈 UZEX"
+        matn = f"{belgi}\n🤖 AI javobi:\n{javob}"
         if len(matn) > 4000:
             matn = matn[:4000] + "\n...(qisqartirildi)"
-        await context.bot.send_message(LOG_CHAT_ID, matn)
+        await context.bot.send_message(chat, matn)
     except Exception as e:
-        logger.warning(f"AI javobini guruhga yuborishda xato: {e}")
+        logger.warning("AI javobini guruhga yuborishda xato (chat=%s): %s", chat, e)
 
 async def buyurtma_yubor(context: ContextTypes.DEFAULT_TYPE, update: Update, phone_number: str):
     user_id = update.effective_user.id
@@ -265,11 +310,16 @@ async def buyurtma_yubor(context: ContextTypes.DEFAULT_TYPE, update: Update, pho
         f"🛠 *Muammo tavsifi:* {muammo}\n"
         f"⏰ *Vaqt:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
-    if LOG_CHAT_ID:
+    chat = log_chat_id()
+    if chat:
         try:
-            await context.bot.send_message(LOG_CHAT_ID, zayavka_matn, parse_mode="Markdown")
+            await context.bot.send_message(chat, zayavka_matn, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"Zayavkani admin guruhga yuborishda xato: {e}")
+            logger.error("Zayavkani admin guruhga yuborishda xato (chat=%s): %s", chat, e)
+            try:
+                await context.bot.send_message(chat, zayavka_matn)
+            except Exception as e2:
+                logger.error("Zayavka oddiy matnda ham ketmadi: %s", e2)
     buyurtma_kutilmoqda.discard(user_id)
     await xavfsiz_reply(
         update,
@@ -300,7 +350,9 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
         )
         logger.info(f"💾 Vaqtinchalik fayl saqlandi: {path}")
         tur_emoji = {"rasm": "📸 RASM", "ovoz": "🎤 OVOZ", "video": "🎬 VIDEO"}
-        await guruhga_yubor(context, user_str, tur_emoji.get(tur, tur), izoh, path)
+        await guruhga_yubor(
+            context, user_str, tur_emoji.get(tur, tur), izoh, path, message=update.message,
+        )
         await xavfsiz_typing(context, chat_id, action=ChatAction.TYPING)
         javob = await media_javob(user_id, path, izoh, tur)
         print(f"🤖 AI javobi:\n{javob}\n")
@@ -315,7 +367,7 @@ async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_i
                 "⚠️ Video tahlili vaqtida uzildi. Qisqaroq video (15–20 soniya) yoki nosoz joyning rasmini yuboring.",
             )
         else:
-            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+            await xavfsiz_reply(update, mijoz_xato(e))
     finally:
         if path and os.path.exists(path):
             try:
@@ -390,7 +442,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             await ai_javobini_yubor(context, javob)
         except Exception as e:
             logger.error(f"Usta topish inline xatosi: {e}")
-            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+            await xavfsiz_reply(update, mijoz_xato(e))
 
     elif data == "btn_zapchast_narxi":
         await query.answer()
@@ -403,7 +455,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             await ai_javobini_yubor(context, javob)
         except Exception as e:
             logger.error(f"Zapchast narxi inline xatosi: {e}")
-            await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+            await xavfsiz_reply(update, mijoz_xato(e))
 
     elif data == "btn_yangi_suhbat":
         await query.answer()
@@ -443,6 +495,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     phone = update.message.contact.phone_number
     chiroyli_log(user_info(update), "📱 KONTAKT YUBORILDI", phone)
+    await guruhga_yubor(context, user_info(update), "📱 KONTAKT", phone, message=update.message)
     await buyurtma_yubor(context, update, phone)
 
 # ═══════════════════════════════════════
@@ -589,6 +642,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chiroyli_log(user_info(update), "🚀 START")
     if update.effective_chat and update.effective_chat.type == "private":
         await save_user(update.effective_chat.id)
+    if in_usta_mode():
+        await guruhga_yubor(context, user_info(update), "🚀 START", message=update.message)
     text = SALOM_USTA if in_usta_mode() else SALOM_UZEX
     await xavfsiz_reply(update, text, reply_markup=klaviatura())
 
@@ -701,7 +756,7 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
 
     chiroyli_log(user_str, "✍️ MATN", matn)
-    await guruhga_yubor(context, user_str, "✍️ MATN", matn)
+    await guruhga_yubor(context, user_str, "✍️ MATN", matn, message=update.message)
     await xavfsiz_typing(context, chat_id, action=ChatAction.TYPING)
     try:
         javob = await matn_javob(user_id, matn)
@@ -709,8 +764,8 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await xavfsiz_reply(update, javob, reply_markup=inline_tashxis_klaviatura())
         await ai_javobini_yubor(context, javob)
     except Exception as e:
-        logger.error(f"Matn xatosi: {e}")
-        await xavfsiz_reply(update, f"⚠️ Xatolik yuz berdi: {str(e)[:200]}")
+        logger.exception("Matn xatosi")
+        await xavfsiz_reply(update, mijoz_xato(e))
 
 async def rasm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     izoh = update.message.caption or ""
@@ -765,7 +820,11 @@ async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_str = user_info(update)
     chat_id = update.effective_chat.id
     chiroyli_log(user_str, "📍 JOYLASHUV", f"{loc.latitude}, {loc.longitude}")
-    await guruhga_yubor(context, user_str, "📍 JOYLASHUV", f"Lat: {loc.latitude}, Lon: {loc.longitude}")
+    await guruhga_yubor(
+        context, user_str, "📍 JOYLASHUV",
+        f"Lat: {loc.latitude}, Lon: {loc.longitude}",
+        message=update.message,
+    )
     await xavfsiz_typing(context, chat_id, action=ChatAction.FIND_LOCATION)
     await xavfsiz_reply(update, "📍 Manzilni aniqlayapman...")
     try:

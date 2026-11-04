@@ -1,13 +1,27 @@
+import logging
 import os
+import re
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from prompts import SYSTEM_PROMPT
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
-# Model nomi env orqali o'zgartirilishi mumkin (masalan GEMINI_MODEL=gemini-2.5-flash)
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+# gemini-3-flash-preview bepul kvotasi tez tugaydi (429). AI Usta avval
+# kvotasi kengroq modellarni sinaydi. UZEX o'z model ro'yxatini o'zi tutadi.
+_USTA_MODELS = (
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+)
+_preferred_model = None
 
 _client = None
 
@@ -71,6 +85,54 @@ def get_joylashuv(user_id):
     return joylashuvlar.get(user_id)
 
 
+class GeminiQuotaError(RuntimeError):
+    """Barcha modellar 429 qaytarganda. Mijozga xom JSON ko'rsatilmaydi."""
+
+
+def usta_model_nomlari():
+    """Ishlaydigan modelni birinchi qo'yib, qolganlarini zaxira sifatida qaytaradi."""
+    nomlar = []
+    for nom in (
+        os.getenv("USTA_GEMINI_MODEL", ""),
+        _preferred_model or "",
+        *_USTA_MODELS,
+        os.getenv("GEMINI_MODEL", ""),
+    ):
+        nom = (nom or "").strip()
+        if nom and nom not in nomlar:
+            nomlar.append(nom)
+    return nomlar
+
+
+def _xato_matni(exc) -> str:
+    return str(exc or "").lower()
+
+
+def kvota_xatosimi(exc) -> bool:
+    matn = _xato_matni(exc)
+    return any(belgi in matn for belgi in (
+        "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+    ))
+
+
+def model_yoqmi(exc) -> bool:
+    matn = _xato_matni(exc)
+    return any(belgi in matn for belgi in (
+        "404", "not_found", "not found", "is not found", "is not supported",
+        "invalid model", "unknown model",
+    ))
+
+
+def _qayta_urinish_soniyasi(exc):
+    mos = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", _xato_matni(exc))
+    if not mos:
+        return None
+    try:
+        return float(mos.group(1))
+    except ValueError:
+        return None
+
+
 def get_system_instruction(user_id):
     """System Prompt va joylashuv ma'lumotlarini birlashtirish"""
     manzil = get_joylashuv(user_id)
@@ -84,38 +146,67 @@ def get_system_instruction(user_id):
     return SYSTEM_PROMPT
 
 
+async def _generate(client, model, contents, config):
+    return await client.aio.models.generate_content(
+        model=model,
+        contents=contents,
+        config=config,
+    )
+
+
 async def ai_sorov(user_id, contents, qidiruv=False):
-    """Gemini API'ga aio (async) client bilan so'rov yuborish (event loop bloklanmaydi)"""
+    """Gemini'ga so'rov. 429 yoki yo'q model bo'lsa keyingi modelga o'tadi."""
+    global _preferred_model
     client = get_client()
     sys_instruction = get_system_instruction(user_id)
-    config_args = {"system_instruction": sys_instruction}
-
-    if qidiruv:
-        config_args["tools"] = [types.Tool(google_search=types.GoogleSearch())]
-
-    config = types.GenerateContentConfig(**config_args)
-
-    if qidiruv:
+    oddiy = types.GenerateContentConfig(system_instruction=sys_instruction)
+    qidiruvli = types.GenerateContentConfig(
+        system_instruction=sys_instruction,
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+    )
+    oxirgi = None
+    for model in usta_model_nomlari():
         try:
-            return await client.aio.models.generate_content(
-                model=MODEL,
-                contents=contents,
-                config=config
+            javob = await _generate(
+                client, model, contents, qidiruvli if qidiruv else oddiy,
             )
         except Exception as e:
-            print(f"⚠️ Google Search qidiruv xatosi, oddiy rejimda qayta uriniladi: {e}")
-            config_no_search = types.GenerateContentConfig(system_instruction=sys_instruction)
-            return await client.aio.models.generate_content(
-                model=MODEL,
-                contents=contents,
-                config=config_no_search
-            )
-
-    return await client.aio.models.generate_content(
-        model=MODEL,
-        contents=contents,
-        config=config
-    )
+            oxirgi = e
+            if qidiruv:
+                logger.warning("Gemini %s qidiruvsiz qayta uriniladi: %s", model, type(e).__name__)
+                try:
+                    javob = await _generate(client, model, contents, oddiy)
+                except Exception as e2:
+                    oxirgi = e2
+                    e = e2
+                else:
+                    _preferred_model = model
+                    logger.info("Gemini model (qidiruvsiz): %s", model)
+                    return javob
+            if kvota_xatosimi(e) or model_yoqmi(e):
+                kutish = _qayta_urinish_soniyasi(e)
+                if kutish is not None and kutish <= 3:
+                    import asyncio
+                    await asyncio.sleep(kutish)
+                    try:
+                        javob = await _generate(client, model, contents, oddiy)
+                    except Exception as e3:
+                        oxirgi = e3
+                        logger.warning("Gemini %s limiti, keyingi model: %s", model, type(e3).__name__)
+                        continue
+                    else:
+                        _preferred_model = model
+                        return javob
+                logger.warning("Gemini %s ishlamadi, keyingi model: %s", model, type(e).__name__)
+                continue
+            raise
+        else:
+            _preferred_model = model
+            logger.info("Gemini model: %s", model)
+            return javob
+    if kvota_xatosimi(oxirgi):
+        raise GeminiQuotaError("AI limiti vaqtincha tugagan") from oxirgi
+    raise oxirgi or RuntimeError("Gemini javob bermadi")
 
 
 async def matn_javob(user_id, xabar):

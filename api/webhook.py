@@ -212,6 +212,44 @@ def _ensure_usta():
         return _usta_app
 
 
+_gemini_probe = {"done": False, "rows": None}
+
+
+async def _probe_gemini():
+    """Bir marta: qaysi model javob berishini tekshiradi. Kalit qaytmaydi."""
+    if _gemini_probe["done"]:
+        return _gemini_probe["rows"]
+    from ai_engine import get_client, kvota_xatosimi, model_yoqmi, usta_model_nomlari
+    rows = []
+    try:
+        client = get_client()
+    except Exception as exc:
+        rows = [{"model": "", "ok": False, "kind": type(exc).__name__}]
+        _gemini_probe["done"] = True
+        _gemini_probe["rows"] = rows
+        return rows
+    for model in usta_model_nomlari()[:5]:
+        try:
+            resp = await client.aio.models.generate_content(
+                model=model,
+                contents="ok",
+                config={"max_output_tokens": 4},
+            )
+            rows.append({"model": model, "ok": True, "has_text": bool(getattr(resp, "text", None))})
+            break
+        except Exception as exc:
+            if kvota_xatosimi(exc):
+                kind = "quota"
+            elif model_yoqmi(exc):
+                kind = "missing"
+            else:
+                kind = type(exc).__name__
+            rows.append({"model": model, "ok": False, "kind": kind})
+    _gemini_probe["done"] = True
+    _gemini_probe["rows"] = rows
+    return rows
+
+
 def _handle_usta(method, path, query, headers, raw_body):
     """Faqat @ai_usta_bot. UZEX tokeni va webhooki bu yerga kirmaydi."""
     if method == "GET":
@@ -238,6 +276,15 @@ def _handle_usta(method, path, query, headers, raw_body):
             if "info" in qs:
                 info = _run(_usta_app.bot.get_webhook_info())
                 me = _run(_usta_app.bot.get_me())
+                log_chat = bot_module.usta_log_chat_id()
+                log_status = "unset"
+                if log_chat:
+                    try:
+                        chat = _run(_usta_app.bot.get_chat(log_chat))
+                        log_status = f"ok:{getattr(chat, 'type', '')}"
+                    except Exception as exc:
+                        log_status = f"fail:{type(exc).__name__}"
+                        logger.warning("usta log chat ochilmadi: %s", exc)
                 return 200, "application/json", json.dumps({
                     "status": "ok",
                     "bot": f"@{me.username}",
@@ -247,6 +294,8 @@ def _handle_usta(method, path, query, headers, raw_body):
                     "pending_updates": info.pending_update_count,
                     "last_error": info.last_error_message,
                     "expected_url": _usta_webhook_url(),
+                    "log_forward": log_status,
+                    "gemini": _run(_probe_gemini()) if "gemini" in qs else None,
                 }, ensure_ascii=False)
         except WrongBotError as exc:
             logger.error("usta: noto'g'ri token, javob yuborilmaydi")

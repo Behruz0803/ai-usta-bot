@@ -28,7 +28,8 @@ _USTA_TOKEN = os.environ.get("USTA_TELEGRAM_TOKEN", "").strip()
 os.environ["BOT_MODE"] = "usta"
 os.environ["EXPECTED_BOT_USERNAME"] = "ai_usta_bot"
 os.environ["TELEGRAM_TOKEN"] = _USTA_TOKEN
-os.environ.pop("LOG_CHAT_ID", None)
+# LOG_CHAT_ID o'chirilmaydi: mijoz xabarlari shu guruhga ketadi.
+# Alohida guruh kerak bo'lsa USTA_LOG_CHAT_ID qo'yiladi.
 
 if "bot" in sys.modules:
     raise RuntimeError("usta webhook UZEX jarayoni ichida yuklanmasin")
@@ -155,6 +156,15 @@ def _handle(method, path, query, headers, raw_body):
                 _ensure_ready(setup_webhook=False)
                 info = _run(_app.bot.get_webhook_info())
                 me = _run(_app.bot.get_me())
+                log_chat = bot_module.usta_log_chat_id()
+                log_status = "unset"
+                if log_chat:
+                    try:
+                        chat = _run(_app.bot.get_chat(log_chat))
+                        log_status = f"ok:{getattr(chat, 'type', '')}"
+                    except Exception as exc:
+                        log_status = f"fail:{type(exc).__name__}"
+                        logger.warning("usta log chat ochilmadi: %s", exc)
                 return 200, "application/json", json.dumps({
                     "status": "ok",
                     "bot": f"@{me.username}" if me else None,
@@ -164,6 +174,7 @@ def _handle(method, path, query, headers, raw_body):
                     "pending_updates": info.pending_update_count,
                     "last_error": info.last_error_message,
                     "expected_url": _webhook_url(),
+                    "log_forward": log_status,
                 }, ensure_ascii=False)
         except WrongBotError:
             logger.error("usta webhook: noto'g'ri bot, javob yuborilmaydi")
