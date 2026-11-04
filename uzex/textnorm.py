@@ -131,4 +131,5 @@ def search_hints(question: str) -> str:
 def as_telegram_html(text: str) -> str:
     """Render the answer as Telegram HTML so '_' in SQL is not eaten."""
     cleaned = text.replace("**", "").replace("```sql", "").replace("```", "")
-    return "<pre>" + html.escape(cleaned) + "</pre>"
+    # quote=False: Telegram HTML does not reliably decode &#x27;, and SQL is full of quotes.
+    return "<pre>" + html.escape(cleaned, quote=False) + "</pre>"
