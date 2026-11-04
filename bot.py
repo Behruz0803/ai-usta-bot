@@ -1,6 +1,7 @@
 import os
 import logging
 import tempfile
+import contextvars
 import httpx
 from datetime import datetime
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    filters, ContextTypes
+    TypeHandler, filters, ContextTypes
 )
 from user_store import save_user
 from ai_engine import (
@@ -37,6 +38,9 @@ load_dotenv()
 BOT_MODE = os.getenv("BOT_MODE", "uzex").strip().lower()
 IS_USTA = BOT_MODE == "usta"
 IS_UZEX = not IS_USTA
+# Bir jarayonda ikki bot bo'lsa ham, har update o'z botiga qarab rejim tanlaydi.
+request_mode = contextvars.ContextVar("request_mode", default="")
+USTA_BOT_ID = 8731876262
 EXPECTED_BOT_USERNAME = os.getenv(
     "EXPECTED_BOT_USERNAME",
     "ai_usta_bot" if IS_USTA else "uzexaihackaton_bot",
@@ -76,8 +80,22 @@ BTN_DBSTATS = "📊 Baza statistikasi"
 
 buyurtma_kutilmoqda = set()
 
+def in_usta_mode() -> bool:
+    forced = request_mode.get()
+    if forced:
+        return forced == "usta"
+    return IS_USTA
+
+def in_uzex_mode() -> bool:
+    return not in_usta_mode()
+
+async def bind_request_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Qaysi bot update oldi — shu botning rejimi. Ikkinchisiga o'tmaydi."""
+    bot_id = context.bot.id if context.bot else 0
+    request_mode.set("usta" if bot_id == USTA_BOT_ID else "uzex")
+
 def klaviatura():
-    if IS_USTA:
+    if in_usta_mode():
         rows = [
             [KeyboardButton(BTN_YANGI), KeyboardButton(BTN_YORDAM)],
             [KeyboardButton(BTN_JOY, request_location=True)],
@@ -190,6 +208,8 @@ async def xavfsiz_reply(update: Update, text: str, reply_markup=None, parse_mode
         await target.reply_text(text, reply_markup=reply_markup)
 
 async def guruhga_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, tur: str, matn: str = "", fayl_path: str = None):
+    if in_usta_mode():
+        return
     if not LOG_CHAT_ID:
         return
     try:
@@ -259,7 +279,7 @@ async def buyurtma_yubor(context: ContextTypes.DEFAULT_TYPE, update: Update, pho
     )
 
 async def media_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE, fayl_id: str, kengaytma: str, tur: str, izoh: str = ""):
-    if IS_UZEX:
+    if in_uzex_mode():
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     user_id = update.effective_user.id
     user_str = user_info(update)
@@ -302,7 +322,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     chat_id = query.message.chat_id if query.message else update.effective_chat.id
 
-    if IS_UZEX and data in {
+    if in_uzex_mode() and data in {
         "btn_xavfsizlik_ok", "btn_ustani_chaqirish", "btn_usta_topish", "btn_zapchast_narxi",
     }:
         await query.answer()
@@ -404,7 +424,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await handle_uzex_query(update, context, "Sement bo'yicha eng qimmat bitim qaysi 2023 yilda?")
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if IS_UZEX:
+    if in_uzex_mode():
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     if not update.message or not update.message.contact:
         return
@@ -520,7 +540,7 @@ def is_uzex_query(text: str) -> bool:
     return False
 
 async def handle_uzex_query(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str):
-    if IS_USTA:
+    if in_usta_mode():
         return await xavfsiz_reply(
             update,
             "Bu bot faqat ta'mir savollariga javob beradi. Birja savollari bu botga tegishli emas.",
@@ -556,7 +576,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chiroyli_log(user_info(update), "🚀 START")
     if update.effective_chat and update.effective_chat.type == "private":
         await save_user(update.effective_chat.id)
-    await xavfsiz_reply(update, SALOM, reply_markup=klaviatura())
+    text = SALOM_USTA if in_usta_mode() else SALOM_UZEX
+    await xavfsiz_reply(update, text, reply_markup=klaviatura())
 
 async def yangi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -564,7 +585,7 @@ async def yangi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buyurtma_kutilmoqda.discard(user_id)
     msg = (
         "🔄 *Yangi so'rov boshlandi!*\n\n"
-        "UZEX savolingizni yozing 👇" if IS_UZEX else "Texnika muammosini yozing 👇"
+        "UZEX savolingizni yozing 👇" if in_uzex_mode() else "Texnika muammosini yozing 👇"
     )
     if update.message:
         try:
@@ -573,9 +594,21 @@ async def yangi(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, reply_markup=klaviatura())
 
 async def yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if in_usta_mode():
+        return await xavfsiz_reply(
+            update,
+            "🔧 *AI Usta*\n\nMuammoni matn, rasm, ovoz yoki video bilan yuboring. Birja savollari bu botga tegishli emas.",
+            reply_markup=klaviatura(),
+        )
     await xavfsiz_reply(update, YORDAM, reply_markup=klaviatura())
 
 async def dbstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if in_usta_mode():
+        return await xavfsiz_reply(
+            update,
+            "Bu bot faqat ta'mir savollariga javob beradi. Birja savollari bu botga tegishli emas.",
+            reply_markup=klaviatura(),
+        )
     if not UZEX_ENABLED:
         await xavfsiz_reply(update, "⚠️ UZEX moduli yuklanmagan.")
         return
@@ -645,11 +678,11 @@ async def matn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_str = user_info(update)
     chat_id = update.effective_chat.id
 
-    if IS_USTA and user_id in buyurtma_kutilmoqda and matn and not matn.startswith("/"):
+    if in_usta_mode() and user_id in buyurtma_kutilmoqda and matn and not matn.startswith("/"):
         chiroyli_log(user_str, "📱 MATNLI TELEFON RAQAM", matn)
         return await buyurtma_yubor(context, update, matn)
 
-    if IS_UZEX:
+    if in_uzex_mode():
         if UZEX_ENABLED and is_uzex_query(matn):
             return await handle_uzex_query(update, context, matn)
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
@@ -712,7 +745,7 @@ async def fayl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await media_ishla(update, context, doc.file_id, kengaytma, tur, izoh)
 
 async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if IS_UZEX:
+    if in_uzex_mode():
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     user_id = update.effective_user.id
     loc = update.message.location
@@ -734,7 +767,7 @@ async def joylashuv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await xavfsiz_reply(update, "⚠️ Xatolik yuz berdi. Shahringiz nomini yozib yuboring.")
 
 async def boshqa_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if IS_UZEX:
+    if in_uzex_mode():
         return await xavfsiz_reply(update, NOT_UZEX, reply_markup=klaviatura())
     await xavfsiz_reply(update, "🤔 Bu turdagi xabarni tushunmayman.\n\nMenga quyidagilarni yuboring:\n✍️ Matn  📸 Rasm  🎤 Ovoz  🎬 Video  📍 Joylashuv\n\nYordam uchun /yordam")
 
@@ -779,6 +812,7 @@ async def post_init(app: Application):
 
 def register_handlers(app: Application) -> Application:
     """Barcha handlerlarni ro'yxatdan o'tkazish."""
+    app.add_handler(TypeHandler(Update, bind_request_mode), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("yangi", yangi))
     app.add_handler(CommandHandler("yordam", yordam))
