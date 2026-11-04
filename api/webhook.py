@@ -172,10 +172,10 @@ async def _build_usta():
     await app.initialize()
     await app.start()
     me = await app.bot.get_me()
-    if me.id != bot_module.USTA_BOT_ID or (me.username or "") != "ai_usta_bot":
+    if me.id != bot_module.USTA_BOT_ID:
         await app.stop()
         await app.shutdown()
-        raise WrongBotError(f"kutilmagan bot @{me.username}")
+        raise WrongBotError(f"kutilmagan bot @{me.username} id={me.id}")
     await app.bot.set_my_commands([
         BotCommand("start", "Boshlash"),
         BotCommand("yangi", "Yangi muammo"),
@@ -238,9 +238,15 @@ def _handle_usta(method, path, query, headers, raw_body):
                     "last_error": info.last_error_message,
                     "expected_url": _usta_webhook_url(),
                 }, ensure_ascii=False)
-        except WrongBotError:
+        except WrongBotError as exc:
             logger.error("usta: noto'g'ri token, javob yuborilmaydi")
-            return 200, "text/plain", "ok"
+            prefix = _usta_token().split(":", 1)[0] if _usta_token() else ""
+            return 200, "application/json", json.dumps({
+                "status": "rejected",
+                "reason": str(exc),
+                "token_set": bool(_usta_token()),
+                "token_prefix": prefix,
+            })
         except Exception:
             logger.exception("usta GET xatosi")
             return 500, "text/plain", "error"
