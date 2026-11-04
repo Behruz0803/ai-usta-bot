@@ -143,16 +143,9 @@ uvicorn web.app:app --host 0.0.0.0 --port 8000 --reload
 4. Tekshirish: `https://<loyiha>.vercel.app/api/webhook` → `{"status":"ok"}`
 5. `https://<loyiha>.vercel.app/api/webhook?setup=1` → webhook qayta o'rnatish
 
-**Eslatma:** Vercel'da `data/uzex.db` fayli 330 MB bo'lgani uchun GitHub'ga push qilib bo'lmaydi (100 MB limit). Yechim:
-- Variant A: Build vaqtida ETL ishga tushirish (Vercel build script)
-- Variant B: DB ni external storage (Supabase/Postgres) ga ko'chirish — keyingi bosqich
+**Baza Vercel'da:** `data/uzex.db` (330 MB) gitga kirmaydi. Siqilgan `data/uzex.db.gz` (~60 MB) repoda bor. Serverless funksiya birinchi so'rovda uni `/tmp/uzex.db` ga ochadi (15–30 sek), keyingi savollar tez.
 
-Hozir prototip uchun lokal + ngrok public URL yetarli. Masalan:
-```bash
-ngrok http 8000
-# yoki cloudflared tunnel --url http://localhost:8000
-# → olingan https URL ni Google Formaga qo'yish
-```
+Telegram: `https://ai-usta-bot-mbm15.vercel.app` (webhook). Lokal polling uchun `.env` da `TELEGRAM_TOKEN` va `GEMINI_API_KEY`.
 
 ---
 

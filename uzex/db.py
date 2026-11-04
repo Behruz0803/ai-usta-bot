@@ -2,26 +2,90 @@
 """
 DB helper: get connection, execute safe SELECT queries
 """
+import gzip
+import os
 import sqlite3
 import pathlib
 import re
+import time
 
-DB_PATH = pathlib.Path(__file__).parent.parent / "data" / "uzex.db"
-# Fallback to /tmp for testing
-ALT_DB = pathlib.Path("/tmp/uzex.db")
+DB_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "uzex.db"
+BUNDLE_GZ = pathlib.Path(__file__).resolve().parent.parent / "data" / "uzex.db.gz"
+# Vercel/serverless can only write to /tmp
+RUNTIME_DB = pathlib.Path("/tmp/uzex.db")
 ALT_DB2 = pathlib.Path("./uzex.db")
+MIN_DB_BYTES = 5_000_000
+
+def _valid_sqlite(path: pathlib.Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < MIN_DB_BYTES:
+            return False
+        with open(path, "rb") as f:
+            return f.read(16).startswith(b"SQLite format 3")
+    except OSError:
+        return False
+
+def _candidate_paths():
+    return [DB_PATH, pathlib.Path("data/uzex.db"), RUNTIME_DB, ALT_DB2]
+
+def db_is_ready() -> bool:
+    return any(_valid_sqlite(p) for p in _candidate_paths())
+
+def _bundled_gz() -> pathlib.Path | None:
+    for p in [BUNDLE_GZ, pathlib.Path("data/uzex.db.gz"), pathlib.Path("/var/task/data/uzex.db.gz")]:
+        if p.exists() and p.stat().st_size > 1_000_000:
+            return p
+    return None
+
+def _gunzip_to(src: pathlib.Path, dest: pathlib.Path) -> pathlib.Path:
+    part = dest.with_suffix(dest.suffix + ".part")
+    print(f"UZEX DB ochilmoqda: {src} ({src.stat().st_size/1024/1024:.1f} MB gz) -> {dest}")
+    t0 = time.time()
+    with gzip.open(src, "rb") as inp, open(part, "wb") as out:
+        while True:
+            chunk = inp.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+    if not _valid_sqlite(part):
+        part.unlink(missing_ok=True)
+        raise RuntimeError("Ochilgan fayl SQLite emas")
+    part.replace(dest)
+    print(f"UZEX DB tayyor: {dest.stat().st_size/1024/1024:.1f} MB, {time.time()-t0:.1f}s")
+    return dest
+
+def ensure_db() -> pathlib.Path:
+    """Return a readable SQLite path. On Vercel, unpack bundled uzex.db.gz into /tmp."""
+    for p in _candidate_paths():
+        if _valid_sqlite(p):
+            return p
+    gz = _bundled_gz()
+    if gz is not None:
+        return _gunzip_to(gz, RUNTIME_DB)
+    url = os.getenv("UZEX_DB_URL", "").strip()
+    if url:
+        import urllib.request
+        gz_part = pathlib.Path("/tmp/uzex.db.gz.part")
+        gz_path = pathlib.Path("/tmp/uzex.db.gz")
+        print(f"UZEX DB yuklanmoqda: {url}")
+        req = urllib.request.Request(url, headers={"User-Agent": "uzex-ai-agent"})
+        with urllib.request.urlopen(req, timeout=45) as resp, open(gz_part, "wb") as out:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+        gz_part.replace(gz_path)
+        return _gunzip_to(gz_path, RUNTIME_DB)
+    raise FileNotFoundError(
+        "UZEX bazasi topilmadi. Lokal: python -m uzex.etl --src /tmp/uzex_spot_data --db ./data/uzex.db"
+    )
 
 def get_db_path():
-    for p in [DB_PATH, pathlib.Path("data/uzex.db"), ALT_DB, ALT_DB2]:
-        if p.exists():
-            return p
-    # default
-    return DB_PATH
+    return ensure_db()
 
 def get_connection(read_only=True):
-    db_path = get_db_path()
-    if not db_path.exists():
-        raise FileNotFoundError(f"DB not found at {db_path}. Run: python -m uzex.etl --src /tmp/uzex_spot_data --db {db_path}")
+    db_path = ensure_db()
     if read_only:
         uri = f"file:{db_path}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)

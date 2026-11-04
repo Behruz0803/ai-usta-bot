@@ -129,6 +129,18 @@ def _handle(method, path, query, headers, raw_body):
                 ))
                 return 200, "application/json", json.dumps(
                     {"status": "ok", "webhook_set_to": url})
+            if "db" in qs:
+                from uzex.db import ensure_db, get_schema_summary
+                import time
+                t0 = time.time()
+                path = ensure_db()
+                return 200, "application/json", json.dumps({
+                    "status": "ok",
+                    "db": str(path),
+                    "size_mb": round(path.stat().st_size / 1024 / 1024, 1),
+                    "summary": get_schema_summary(),
+                    "elapsed_s": round(time.time() - t0, 2),
+                }, ensure_ascii=False)
             if "info" in qs:
                 if not _token():
                     return 500, "text/plain", "TELEGRAM_TOKEN not set"

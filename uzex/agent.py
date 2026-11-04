@@ -24,6 +24,13 @@ from .db import execute_sql, is_safe_select
 load_dotenv()
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+MODEL_FALLBACKS = [
+    MODEL,
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash",
+]
 _client = None
 
 def get_client():
@@ -146,11 +153,30 @@ Return ONLY JSON, no markdown, no extra text.
         max_output_tokens=2000,
     )
     try:
-        resp = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
-            config=config
-        )
+        resp = None
+        last_err = None
+        seen = set()
+        for model_name in MODEL_FALLBACKS:
+            if not model_name or model_name in seen:
+                continue
+            seen.add(model_name)
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[types.Content(role="user", parts=[types.Part(text=user_prompt)])],
+                    config=config
+                )
+                print(f"Gemini SQL model: {model_name}")
+                break
+            except Exception as e:
+                last_err = e
+                print(f"⚠️ Gemini model {model_name} failed: {e}")
+                msg = str(e).lower()
+                # auth/quota errors will not be fixed by switching model
+                if any(k in msg for k in ("api key", "permission", "unauthenticated", "quota", "billing", "403", "401")):
+                    break
+        if resp is None:
+            raise last_err or RuntimeError("Gemini javob bermadi")
         text = (resp.text or "").strip()
         # Clean markdown code fences if present
         if text.startswith("```"):

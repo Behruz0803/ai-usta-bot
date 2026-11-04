@@ -502,6 +502,9 @@ async def handle_uzex_query(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await guruhga_yubor(context, user_str, "📊 UZEX", question)
     await xavfsiz_typing(context, chat_id, ChatAction.TYPING)
     try:
+        from uzex.db import db_is_ready
+        if not db_is_ready():
+            await xavfsiz_reply(update, "⏳ Baza ochilmoqda (500 000 bitim). Birinchi savol 15–30 soniya olishi mumkin...")
         javob = await uzex_answer(question, user_id)
         print(f"🤖 UZEX javobi:\n{javob}\n")
         await xavfsiz_reply(update, javob, reply_markup=inline_uzex_klaviatura())
