@@ -92,7 +92,13 @@ RESPONSE FORMAT (strict JSON):
   "needs_data": true
 }}
 
-If question is unrelated to DB (e.g., "Salom", "Kimsan?") → still try to answer helpfully but set needs_data=false and sql="".
+If question is unrelated to DB (e.g., "Salom", "Kimsan?") → set needs_data=false and sql="".
+Short market questions are NOT greetings. Always return SQL:
+- "eng qimmat bitim qaysi" → MAX deal_sum_uzs, status Исполнен, no year means all years
+- "eng arzonichi" / "eng arzon" → MIN unit_price_uzs among executed deals
+- "pul aylantirgan brokerlar" → SUM(deal_sum_uzs) by broker, both sides, no double count
+- "2026 avgust top brokerlar" → COUNT deals in that month only
+- "aksiya" / "акция" → search product_name; 0 rows is correct, do not invent a share price
 
 Example hallucination prevention:
 User: "Kompaniya 'SpaceX' ning 2024 yildagi bitimlari qancha?"
@@ -105,8 +111,16 @@ Always show SQL and calculation basis in final answer — this is 20 балла 
 async def generate_sql(question: str) -> dict:
     """Ask Gemini to generate SQL JSON, with heuristic fallback if no API key / no internet"""
     lang_hint = detect_language(question)
+    # Qisqa og'zaki savolni Gemini salom deb o'qimasin — aniq naqsh bo'lsa darhol SQL.
+    try:
+        from .heuristic import heuristic_sql
+        sure = heuristic_sql(question)
+        if sure.get("confident") and sure.get("sql"):
+            return sure
+    except Exception as e:
+        print(f"confident heuristic error: {e}")
     # Try heuristic first if no API key or heuristic can handle quickly and Gemini not reachable
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("UZEX_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
     # If no API key, use heuristic directly
     if not api_key:
         try:
@@ -396,6 +410,19 @@ async def answer(question: str, user_id=None):
     explanation = gen.get("explanation", "")
     lang = gen.get("language", detect_language(question))
     needs_data = gen.get("needs_data", True)
+
+    # Gemini bo'sh SQL qaytarsa ham, og'zaki savolni salom deb yopma.
+    if not sql:
+        try:
+            from .heuristic import heuristic_sql
+            h = heuristic_sql(question)
+            if h.get("sql"):
+                sql = h["sql"]
+                explanation = h.get("explanation") or explanation
+                lang = h.get("language") or lang
+                needs_data = True
+        except Exception as e:
+            print(f"heuristic after empty SQL: {e}")
 
     # If LLM says no data needed (greeting etc.), return direct answer
     if not needs_data or not sql:

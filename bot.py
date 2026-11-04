@@ -580,6 +580,8 @@ UZEX_KEYWORDS = [
     "soda", "karbamid", "polietilen", "truba", "sotuvchi", "xaridor", "продавец", "покупатель",
     "eksport", "экспорт", "narx", "цена", "summa", "сумма", "qancha", "сколько", "nechta",
     "qaysi", "какой", "yilda", "году", "region", "viloyat", "oblast", "hajm", "объем",
+    "qimmat", "arzon", "дорог", "дешев", "aksiya", "акция", "aylantir", "оборот",
+    "avgust", "август", "top broker", "топ брокер",
 ]
 
 def is_uzex_query(text: str) -> bool:

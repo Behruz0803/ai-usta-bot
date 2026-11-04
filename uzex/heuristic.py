@@ -31,6 +31,192 @@ def extract_year(text):
     m = re.search(r"\b(202[2-6])\b", text)
     return m.group(1) if m else None
 
+
+_MONTHS = (
+    ("yanvar", "январ", 1),
+    ("fevral", "феврал", 2),
+    ("mart", "март", 3),
+    ("aprel", "апрел", 4),
+    ("may", "май", 5),
+    ("iyun", "июн", 6),
+    ("iyul", "июл", 7),
+    ("avgust", "август", 8),
+    ("sentabr", "сентябр", 9),
+    ("oktabr", "октябр", 10),
+    ("noyabr", "ноябр", 11),
+    ("dekabr", "декабр", 12),
+)
+
+
+def extract_month(text):
+    low = text.lower()
+    for uz, ru, num in _MONTHS:
+        if re.search(rf"\b{uz}\w*", low) or re.search(rf"\b{ru}\w*", low):
+            return num
+    m = re.search(r"\b(0?[1-9]|1[0-2])\s*[-/.]?\s*oy", low)
+    return int(m.group(1)) if m else None
+
+
+def _period(year, month):
+    if year and month:
+        import calendar
+        last = calendar.monthrange(int(year), int(month))[1]
+        start = f"{year}-{int(month):02d}-01"
+        end = f"{year}-{int(month):02d}-{last:02d}"
+        return f"deal_date BETWEEN '{start}' AND '{end}'", f"{year}-{int(month):02d}"
+    if year:
+        return f"deal_date BETWEEN '{year}-01-01' AND '{year}-12-31'", str(year)
+    return "1=1", "barcha yillar"
+
+
+def _done(sql, exp, lang):
+    return {"sql": sql, "explanation": exp, "language": lang, "needs_data": True, "confident": True}
+
+
+def casual_ranking_sql(question: str):
+    """Qisqa og'zaki savollar: Gemini ularni salom deb o'qimasin."""
+    lang = detect_lang(question)
+    ql = question.lower().replace("’", "'").replace("`", "'")
+    year = extract_year(question)
+    month = extract_month(question)
+    period_sql, period_label = _period(year, month)
+    has_broker = "broker" in ql or "брокер" in ql
+    has_deal = "bitim" in ql or "сдел" in ql
+    expensive = any(w in ql for w in ("qimmat", "дорог", "дорого"))
+    cheap = any(w in ql for w in ("arzon", "дешев", "дешёв"))
+    share = any(w in ql for w in ("aksiya", "акция", "aksiy"))
+    # Tovar nomi bor savolni (paxta yog'i, sement) bu umumiy naqsh yutib yubormasin.
+    if not share and extract_product(question):
+        return None
+    turnover = any(w in ql for w in ("aylantir", "oborot", "оборот", "pul aylantir", "aylanma"))
+    topish = any(w in ql for w in ("top", "топ", "eng ko", "ko'p", "ko‘p", "kop ", "больше всего"))
+
+    if share:
+        year_sql = f" AND {period_sql}" if year or month else ""
+        sql = (
+            "SELECT deal_id, deal_date, product_name, "
+            "ROUND(unit_price_uzs, 2) AS unit_price_uzs, ROUND(deal_sum_uzs, 2) AS deal_sum_uzs "
+            "FROM deals_enriched WHERE ("
+            "ufold(product_name) LIKE ufold('%акция%') "
+            "OR ufold(product_name) LIKE ufold('%акци%') "
+            "OR ufold(product_name) LIKE ufold('%aksiya%')"
+            f"){year_sql} LIMIT 20;"
+        )
+        exp = (
+            "Aksiya/ulush/qimmatli qog'oz qidirildi. Bu baza tovar-xomashyo birjasi, "
+            "aksiya bo'lmasa 0 qator — raqam to'qilmaydi."
+            if lang == "uz" else
+            "Поиск акций. Это товарно-сырьевая биржа; если акций нет, 0 строк — число не выдумывается."
+        )
+        return _done(sql, exp, lang)
+
+    if has_broker and (turnover or (expensive and "pul" in ql)):
+        sql = f"""
+SELECT b.broker_code, b.name,
+       ROUND(SUM(x.turnover), 2) AS turnover_uzs,
+       SUM(x.deals) AS deals
+FROM (
+  SELECT seller_broker AS broker_code, SUM(deal_sum_uzs) AS turnover, COUNT(*) AS deals
+  FROM deals_enriched
+  WHERE deal_status != 'Аннулирован(Не оплачен)' AND {period_sql}
+    AND seller_broker IS NOT NULL AND seller_broker != ''
+  GROUP BY seller_broker
+  UNION ALL
+  SELECT buyer_broker, SUM(deal_sum_uzs), COUNT(*)
+  FROM deals_enriched
+  WHERE deal_status != 'Аннулирован(Не оплачен)' AND {period_sql}
+    AND buyer_broker IS NOT NULL AND buyer_broker != ''
+    AND buyer_broker != IFNULL(seller_broker, '')
+  GROUP BY buyer_broker
+) x
+JOIN brokers b ON b.broker_code = x.broker_code
+GROUP BY b.broker_code, b.name
+ORDER BY turnover_uzs DESC
+LIMIT 5;
+""".strip()
+        exp = (
+            f"Brokerlar pul aylanmasi, so'mda, bekor qilinganlar yo'q ({period_label}). "
+            "Bir bitimda broker ikki tomonda bo'lsa, bir marta sanaladi."
+            if lang == "uz" else
+            f"Оборот брокеров в сумах без аннулированных ({period_label})."
+        )
+        return _done(sql, exp, lang)
+
+    if has_broker and (topish or "qaysi" in ql or "какой" in ql or "kim" in ql):
+        sql = f"""
+SELECT b.broker_code, b.name, COUNT(*) AS deals
+FROM deals d
+JOIN brokers b ON b.broker_code = d.seller_broker OR b.broker_code = d.buyer_broker
+WHERE d.deal_status != 'Аннулирован(Не оплачен)' AND {period_sql}
+GROUP BY b.broker_code, b.name
+ORDER BY deals DESC
+LIMIT 5;
+""".strip()
+        exp = (
+            f"Top brokerlar bitim soni bo'yicha, bekor qilinganlar yo'q ({period_label}). "
+            "Sotuvchi yoki xaridor tomoni, bitim ikki marta sanalmaydi."
+            if lang == "uz" else
+            f"Топ брокеров по числу сделок без аннулированных ({period_label})."
+        )
+        return _done(sql, exp, lang)
+
+    if expensive and has_deal and "narx" not in ql and "цена" not in ql:
+        sql = f"""
+SELECT deal_id, deal_date, product_name, deal_status, currency, unit,
+       ROUND(deal_sum_uzs, 2) AS deal_sum_uzs,
+       ROUND(unit_price_uzs, 2) AS unit_price_uzs,
+       seller_broker, buyer_broker
+FROM deals_enriched
+WHERE deal_status = 'Исполнен' AND deal_sum_uzs IS NOT NULL AND {period_sql}
+ORDER BY deal_sum_uzs DESC
+LIMIT 1;
+""".strip()
+        exp = (
+            f"Eng qimmat ijro etilgan bitim — eng katta summa so'mda ({period_label}). "
+            "Eksport dollari shu kundagi kursga ko'paytirilgan."
+            if lang == "uz" else
+            f"Самая дорогая исполненная сделка по сумме в сумах ({period_label})."
+        )
+        return _done(sql, exp, lang)
+
+    if cheap and has_deal:
+        sql = f"""
+SELECT deal_id, deal_date, product_name, deal_status, currency, unit,
+       ROUND(deal_sum_uzs, 2) AS deal_sum_uzs,
+       ROUND(unit_price_uzs, 2) AS unit_price_uzs
+FROM deals_enriched
+WHERE deal_status = 'Исполнен' AND deal_sum_uzs > 0 AND {period_sql}
+ORDER BY deal_sum_uzs ASC
+LIMIT 1;
+""".strip()
+        exp = f"Eng arzon ijro etilgan bitim — eng kichik summa so'mda ({period_label})." if lang == "uz" else f"Самая дешёвая исполненная сделка по сумме в сумах ({period_label})."
+        return _done(sql, exp, lang)
+
+    if cheap or (expensive and not has_broker):
+        order = "ASC" if cheap else "DESC"
+        metric = "unit_price_uzs"
+        if expensive and has_deal:
+            metric = "deal_sum_uzs"
+        label = "Eng arzon birlik narxi" if cheap else "Eng qimmat birlik narxi"
+        sql = f"""
+SELECT '{label}' AS mezon, deal_id, deal_date, product_name, unit, deal_status,
+       ROUND(unit_price_uzs, 2) AS unit_price_uzs,
+       ROUND(deal_sum_uzs, 2) AS deal_sum_uzs
+FROM deals_enriched
+WHERE deal_status = 'Исполнен' AND quantity > 0 AND lot > 0 AND unit_price_uzs > 0 AND {period_sql}
+ORDER BY {metric} {order}
+LIMIT 1;
+""".strip()
+        exp = (
+            f"{label}, ijro etilgan bitimlar, so'm ({period_label}). "
+            "Birlik narxi = bitim summasi / (soni × lot)."
+            if lang == "uz" else
+            f"{label}, исполненные сделки, в сумах ({period_label})."
+        )
+        return _done(sql, exp, lang)
+
+    return None
+
 def extract_product(text):
     # naive: known products list from DB
     products_keywords = {
@@ -65,6 +251,10 @@ def heuristic_sql(question: str):
     """
     Returns dict with keys like generate_sql: sql, explanation, language, needs_data
     """
+    casual = casual_ranking_sql(question)
+    if casual:
+        return casual
+
     lang = detect_lang(question)
     ql = question.lower()
     inn = extract_inn(question)
