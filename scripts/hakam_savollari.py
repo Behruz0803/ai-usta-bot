@@ -66,7 +66,10 @@ async def run(show=None):
         dt = time.time() - t0
         first = ans.split("\n")[0][:70]
         has_sql = "```sql" in ans
-        no_data = ("topilmadi" in ans.lower() or "mavjud emas" in ans.lower())
+        low = ans.lower()
+        no_data = any(k in low for k in (
+            "topilmadi", "mavjud emas", "такой информации нет", "нет информации",
+            "не найдено", "нет данных"))
         flag = "OK " if (has_sql or no_data) and dt < 20 and "XATO" not in ans else "!! "
         if flag == "OK ":
             ok += 1

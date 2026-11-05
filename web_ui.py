@@ -155,7 +155,7 @@ def app(environ, start_response):
     return [payload]
 
 
-# Lokal sinov: python api/index.py  (yoki: uvicorn — kerak emas)
+# Lokal sinov: python web_ui.py  (port 8000; Vercel'da api/webhook.py import qiladi)
 if __name__ == "__main__":
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

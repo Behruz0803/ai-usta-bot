@@ -356,7 +356,7 @@ def _handle_usta(method, path, query, headers, raw_body):
     return 200, "text/plain", "ok"
 
 
-# Veb-interfeys (api/index.py) — bir xil funksiya ichida, chunki Vercel'da
+# Veb-interfeys (web_ui.py) — bir xil funksiya ichida, chunki Vercel'da
 # bitta funksiya = bitta entrypoint. Telegram webhookiga tegmaydi.
 WEB_PATHS = ("/", "/chat", "/index", "/api/query", "/api/health", "/api/stats")
 
