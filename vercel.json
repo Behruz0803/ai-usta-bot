@@ -8,50 +8,28 @@
     "api/usta.py": {
       "maxDuration": 300,
       "memory": 1024
-    },
-    "api/index.py": {
-      "maxDuration": 300,
-      "memory": 1024
-    },
-    "api/query.py": {
-      "maxDuration": 300,
-      "memory": 1024
     }
   },
   "rewrites": [
     {
       "source": "/",
-      "has": [
-        {
-          "type": "query",
-          "key": "info"
-        }
-      ],
       "destination": "/api/webhook"
     },
     {
-      "source": "/",
-      "has": [
-        {
-          "type": "query",
-          "key": "setup"
-        }
-      ],
+      "source": "/chat",
       "destination": "/api/webhook"
     },
     {
-      "source": "/",
-      "has": [
-        {
-          "type": "query",
-          "key": "db"
-        }
-      ],
+      "source": "/api/query",
       "destination": "/api/webhook"
     },
     {
-      "source": "/",
-      "destination": "/api/index"
+      "source": "/api/health",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/api/stats",
+      "destination": "/api/webhook"
     }
   ]
 }

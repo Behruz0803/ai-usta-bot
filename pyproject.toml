@@ -13,3 +13,7 @@ dependencies = [
     "uvicorn",
     "jinja2",
 ]
+
+# Vercel Python entrypoint (bitta funksiya — ichida marshrutlash)
+[tool.vercel]
+entrypoint = "api.webhook:app"

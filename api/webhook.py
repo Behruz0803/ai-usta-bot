@@ -356,9 +356,34 @@ def _handle_usta(method, path, query, headers, raw_body):
     return 200, "text/plain", "ok"
 
 
-def _handle(method, path, query, headers, raw_body):
+# Veb-interfeys (api/index.py) — bir xil funksiya ichida, chunki Vercel'da
+# bitta funksiya = bitta entrypoint. Telegram webhookiga tegmaydi.
+WEB_PATHS = ("/", "/chat", "/index", "/api/query", "/api/health", "/api/stats")
+
+
+def _web_response(environ_like=None, method="GET", path="/", query="", raw_body=b""):
+    from web_ui import _handle as web_handle
+    return web_handle(method, path, query, raw_body)
+
+
+def _is_web_path(path):
+    p = (path or "/").rstrip("/") or "/"
+    return p in WEB_PATHS
+
+
+def _handle(method, path, query, headers, raw_body, web_ctx=None):
     if _is_usta_path(path):
         return _handle_usta(method, path, query, headers, raw_body)
+    if _is_web_path(path):
+        from urllib.parse import parse_qs as _pq
+        # Telegram webhook POST'i "/" ga kelmaydi (/api/webhook), lekin
+        # ehtiyot uchun: JSON'da "update_id" bo'lsa — botga.
+        if method == "POST" and raw_body and b"update_id" not in raw_body:
+            return _web_response(method=method, path=path, query=query, raw_body=raw_body)
+        if method == "GET":
+            qs = _pq(query or "")
+            if not any(k in qs for k in ("info", "setup", "db")):
+                return _web_response(method=method, path=path, query=query)
     if method == "GET":
         qs = parse_qs(query or "")
         try:
