@@ -137,8 +137,16 @@ def is_safe_select(sql: str) -> tuple[bool, str]:
         return False, f"Forbidden keyword detected: {FORBIDDEN_KEYWORDS.search(s).group(0)}"
     return True, "OK"
 
-def execute_sql(sql: str, params=None, limit: int = 100):
-    """Execute SQL and return rows, column names, rowcount, error"""
+DEFAULT_QUERY_TIMEOUT_MS = int(os.getenv("UZEX_SQL_TIMEOUT_MS", "12000"))
+
+
+def execute_sql(sql: str, params=None, limit: int = 100, timeout_ms: int | None = None):
+    """Execute SQL and return rows, columns, rowcount, error.
+
+    `timeout_ms` — SQLite progress handler orqali qattiq vaqt chegarasi.
+    Busiz bitta og'ir JOIN butun webhook'ni osilib qoldirishi mumkin edi
+    (auditdagi 90 soniya talabi buziladi).
+    """
     safe, msg = is_safe_select(sql)
     if not safe:
         return None, None, 0, msg
@@ -146,7 +154,14 @@ def execute_sql(sql: str, params=None, limit: int = 100):
     # Enforce LIMIT if not present for non-aggregation queries to prevent huge results
     # Heuristic: if no LIMIT and not aggregation (COUNT,SUM,AVG etc without GROUP BY?), we will add LIMIT
     # But we leave to LLM to include LIMIT; we just cap results to `limit` rows in Python
+    timeout_ms = DEFAULT_QUERY_TIMEOUT_MS if timeout_ms is None else timeout_ms
     conn = get_connection(read_only=True)
+    deadline = time.monotonic() + (timeout_ms / 1000.0)
+    if timeout_ms and timeout_ms > 0:
+        def _watchdog():
+            # 0 dan farqli qiymat — SQLite so'rovni to'xtatadi (OperationalError).
+            return 1 if time.monotonic() > deadline else 0
+        conn.set_progress_handler(_watchdog, 20000)
     try:
         cur = conn.cursor()
         # Set timeout 5 seconds
@@ -162,9 +177,15 @@ def execute_sql(sql: str, params=None, limit: int = 100):
         columns = [desc[0] for desc in cur.description] if cur.description else []
         # Also get total count if truncated? We can just note truncated
         return rows, columns, len(rows), None if not truncated else f"Results truncated to {limit} rows (add LIMIT or aggregation)"
+    except sqlite3.OperationalError as e:
+        # Progress handler to'xtatgan so'rov bo'lishi mumkin
+        if "interrupt" in str(e).lower():
+            return None, None, 0, f"SQL so'rovi {timeout_ms} ms ichida tugamadi (juda og'ir so'rov)"
+        return None, None, 0, f"SQLite error: {e}"
     except sqlite3.Error as e:
         return None, None, 0, f"SQLite error: {e}"
     finally:
+        conn.set_progress_handler(None, 0)
         conn.close()
 
 def get_schema_summary():

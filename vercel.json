@@ -8,9 +8,28 @@
     "api/usta.py": {
       "maxDuration": 300,
       "memory": 1024
+    },
+    "api/index.py": {
+      "maxDuration": 300,
+      "memory": 1024
     }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api/webhook" }
+    {
+      "source": "/",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/query",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/stats",
+      "destination": "/api/index"
+    }
   ]
 }

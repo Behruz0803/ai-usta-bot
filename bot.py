@@ -204,37 +204,66 @@ async def xavfsiz_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, actio
     except Exception as e:
         logger.warning(f"Typing statusini yuborishda xato: {e}")
 
+TELEGRAM_SAFE_LIMIT = 3900  # 4096 dan xavfsiz chegara
+
+
+def _html_chunks(html_text: str, limit: int = TELEGRAM_SAFE_LIMIT):
+    """<pre> bilan o'ralgan matnni bo'laklarga ajratadi.
+
+    Har bir bo'lak yana <pre> ichiga olinadi — Telegram HTML tegi buzilmaydi.
+    (Audit: 4096 belgidan uzun javob "Message is too long" xatosi berardi.)
+    """
+    body = html_text
+    if body.startswith("<pre>") and body.endswith("</pre>"):
+        body = body[5:-6]
+    # Bo'lak ichida <pre> uchun joy qoldiramiz
+    inner = max(500, limit - len("<pre></pre>"))
+    raw_parts = []
+    rest = body
+    while len(rest) > inner:
+        cut = rest.rfind("\n", 0, inner)
+        if cut < inner * 0.5:
+            cut = inner
+        raw_parts.append(rest[:cut].rstrip("\n"))
+        rest = rest[cut:].lstrip("\n")
+    if rest:
+        raw_parts.append(rest)
+    return [f"<pre>{p}</pre>" for p in raw_parts if p.strip()]
+
+
 async def xavfsiz_reply(update: Update, text: str, reply_markup=None, parse_mode="Markdown"):
     target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
     if not target:
         return
-    # Telegram max 4096 chars, split if needed
-    if len(text) > 4000:
-        # Split by lines
-        parts = []
-        current = ""
-        for line in text.split("\n"):
-            if len(current) + len(line) + 1 > 4000:
-                parts.append(current)
-                current = line + "\n"
-            else:
-                current += line + "\n"
-        if current:
-            parts.append(current)
+    # Telegram max 4096 chars — uzun javoblarni bo'laklab yuboramiz
+    if len(text) > TELEGRAM_SAFE_LIMIT:
+        if parse_mode == "HTML" and text.startswith("<pre>"):
+            parts = _html_chunks(text)
+        else:
+            from uzex.answer import split_message
+            parts = split_message(text, TELEGRAM_SAFE_LIMIT)
         for i, part in enumerate(parts):
+            markup = reply_markup if i == len(parts) - 1 else None
             try:
-                await target.reply_text(part, parse_mode=parse_mode, reply_markup=reply_markup if i==len(parts)-1 else None)
-            except BadRequest:
-                await target.reply_text(part, reply_markup=reply_markup if i==len(parts)-1 else None)
+                await target.reply_text(part, parse_mode=parse_mode, reply_markup=markup)
+            except BadRequest as e:
+                logger.warning("Bo'lak yuborilmadi (parse), oddiy matnda: %s", e)
+                await target.reply_text(part, reply_markup=markup)
         return
     try:
         await target.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except BadRequest as e:
-        logger.warning(f"Markdown parse xatosi, oddiy matnda yuborilmoqda: {e}")
-        await target.reply_text(text, reply_markup=reply_markup)
+        logger.warning(f"Parse xatosi, oddiy matnda yuborilmoqda: {e}")
+        # HTML/Markdown teglarini olib tashlab qayta urinamiz
+        import re as _re
+        plain = _re.sub(r"<[^>]+>", "", text)
+        await target.reply_text(plain, reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Xabar yuborishda kutilmagan xatolik: {e}")
-        await target.reply_text(text, reply_markup=reply_markup)
+        try:
+            await target.reply_text(text, reply_markup=reply_markup)
+        except Exception as e2:
+            logger.error(f"Zaxira yuborish ham muvaffaqiyatsiz: {e2}")
 
 async def guruhga_yubor(context: ContextTypes.DEFAULT_TYPE, user_str: str, tur: str, matn: str = "", fayl_path: str = None, message=None):
     chat = log_chat_id()
@@ -584,6 +613,13 @@ UZEX_KEYWORDS = [
     "avgust", "август", "yanvar", "fevral", "mart", "aprel", "sentabr", "oktabr",
     "noyabr", "dekabr", "top broker", "топ брокер",
     "dollar", "доллар", "usd", "$", "shartom", "so'm", "so‘m", "сум", "kurs", "курс",
+    # audit: qisqa savollar rad etilgan edi
+    "kompaniya", "компани", "korxona", "предприят", "narx", "narxi", "to'lov",
+    "forvard", "форвард", "fyuchers", "фьючерс", "spot", "спот", "bekor", "аннулир",
+    "aylanma", "aylanmasi", "оборот", "eng qimmat", "eng arzon", "top", "jami",
+    "statistika", "статистика", "hisobot", "shakar", "сахар", "un", "мука",
+    "bug'doy", "пшеница", "benzin", "бензин", "gaz", "газ", "paxta", "хлопок",
+    "viloyat", "област", "tuman", "hudud", "respublika",
 ]
 
 def is_uzex_query(text: str) -> bool:
@@ -605,7 +641,17 @@ def is_uzex_query(text: str) -> bool:
     if re.search(r"\b\d{9}\b", text):
         return True
     # Broker code
-    if re.search(r"\bBK\d{3}\b", text, re.I):
+    if re.search(r"\bBK\s*\d{1,3}\b", text, re.I):
+        return True
+    # Audit: qisqa savollar ("eng arzonichi") javobsiz qolmasin.
+    # 3+ so'zli, savol belgisi yoki savol so'zi bo'lsa — UZEX agentiga yuboramiz,
+    # u o'zi "tushunmadim" deb javob beradi.
+    if len(text.split()) >= 2 and any(w in tl for w in (
+        "eng", "qaysi", "qancha", "nechta", "kim", "qachon", "bormi", "top",
+        "какой", "сколько", "кто", "когда", "самый", "есть",
+    )):
+        return True
+    if "?" in text or "?" in text:
         return True
     return False
 
@@ -637,7 +683,15 @@ async def handle_uzex_query(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await ai_javobini_yubor(context, javob)
     except Exception as e:
         logger.exception(f"UZEX xatosi: {e}")
-        await xavfsiz_reply(update, f"⚠️ Xatolik: {str(e)[:500]}")
+        # Foydalanuvchiga xom texnik xato ko'rsatmaymiz (audit: 503 xatosi chiqardi)
+        await xavfsiz_reply(
+            update,
+            "⚠️ Savolga javob berishda texnik xatolik yuz berdi.\n"
+            "Iltimos, savolni biroz boshqacha yozib ko'ring yoki 5–10 soniyadan keyin qayta yuboring.\n\n"
+            "⚠️ Техническая ошибка при обработке вопроса. Попробуйте переформулировать "
+            "или повторите через 5–10 секунд.",
+            reply_markup=klaviatura(),
+        )
 
 # ═══════════════════════════════════════
 # BUYRUQLAR

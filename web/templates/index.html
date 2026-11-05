@@ -3,86 +3,168 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>UZEX AI Agent — 500k bitimlar</title>
+<title>UZEX AI Agent — birja bo'yicha AI yordamchi</title>
+<meta name="description" content="UZEX birja bitimlari (2022–2026, 500 000 ta) bo'yicha savollarga aniq javob: SQL va hisob-kitob bilan.">
 <style>
-*{box-sizing:border-box} body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b1026;color:#e8f0ff;margin:0;padding:0}
-.header{background:linear-gradient(135deg,#0b1026,#1a2a6a);padding:32px 20px;text-align:center;border-bottom:1px solid #233}
-.header h1{margin:0;font-size:28px;color:#fff}
-.header p{color:#9bb;margin:8px 0 0}
-.container{max-width:900px;margin:0 auto;padding:20px}
-.card{background:#131a3a;border:1px solid #223; border-radius:12px; padding:16px; margin:16px 0}
-.chat{height:420px; overflow-y:auto; background:#0d1330; border:1px solid #223; border-radius:12px; padding:12px}
-.msg{margin:10px 0; padding:12px 14px; border-radius:10px; max-width:85%}
-.user{background:#1a5cff; color:#fff; margin-left:auto; text-align:right}
-.bot{background:#1e2a5a; color:#e8f0ff}
-.input-row{display:flex; gap:8px; margin-top:12px}
-.input-row input{flex:1; padding:12px; border-radius:10px; border:1px solid #334; background:#0d1330; color:#fff; font-size:15px}
-.input-row button{padding:12px 16px; border-radius:10px; border:0; background:#1a5cff; color:#fff; font-weight:600; cursor:pointer}
-.examples{display:flex; flex-wrap:wrap; gap:8px}
-.examples button{background:#16204a; color:#9bb; border:1px solid #334; padding:8px 12px; border-radius:20px; cursor:pointer; font-size:13px}
-.examples button:hover{background:#1a2a6a;color:#fff}
-pre{background:#0a0f2a; padding:12px; border-radius:8px; overflow-x:auto; font-size:13px}
-.sql{color:#5fd06e}
-.badge{display:inline-block; background:#1a5cff; color:#fff; padding:2px 8px; border-radius:20px; font-size:12px; margin-right:6px}
-.footer{text-align:center; color:#6a7; font-size:12px; margin:24px}
-a{color:#5fd06e}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#0b1026;color:#e8f0ff;margin:0}
+a{color:#7ee787}
+.header{background:linear-gradient(135deg,#0b1026,#1a2a6a);padding:26px 20px;text-align:center;border-bottom:1px solid #223055}
+.header h1{margin:0;font-size:26px;color:#fff}
+.header p{color:#9fb0d0;margin:8px 0 0;font-size:14px}
+.container{max-width:960px;margin:0 auto;padding:18px}
+.card{background:#131a3a;border:1px solid #223055;border-radius:14px;padding:16px;margin:14px 0}
+h3{margin:0 0 10px;font-size:15px;color:#c7d3f0}
+.examples{display:flex;flex-wrap:wrap;gap:8px}
+.examples button{background:#16204a;color:#b9c7e6;border:1px solid #2b3a68;padding:8px 12px;border-radius:20px;cursor:pointer;font-size:13px}
+.examples button:hover{background:#1e2a5a;color:#fff}
+.chat{height:460px;overflow-y:auto;background:#0d1330;border:1px solid #223055;border-radius:12px;padding:12px}
+.msg{margin:10px 0;padding:12px 14px;border-radius:12px;max-width:92%;white-space:pre-wrap;word-wrap:break-word;font-size:14px;line-height:1.5}
+.user{background:#1a5cff;color:#fff;margin-left:auto;white-space:pre-wrap}
+.bot{background:#1b2550;color:#e8f0ff;border:1px solid #26325f}
+.bot .ok{color:#7ee787;font-weight:600}
+.bot .warn{color:#ffcc66;font-weight:600}
+.bot .err{color:#ff8080;font-weight:600}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:12.5px;display:block;overflow-x:auto}
+th,td{border:1px solid #2b3a68;padding:5px 8px;text-align:left;white-space:nowrap}
+th{background:#1b2550;color:#c7d3f0}
+pre{background:#0a0f2a;padding:10px;border-radius:8px;overflow-x:auto;font-size:12px;color:#9be39b;white-space:pre-wrap}
+.input-row{display:flex;gap:8px;margin-top:12px}
+.input-row input{flex:1;padding:13px;border-radius:10px;border:1px solid #2b3a68;background:#0d1330;color:#fff;font-size:15px}
+.input-row button{padding:13px 18px;border-radius:10px;border:0;background:#1a5cff;color:#fff;font-weight:600;cursor:pointer}
+.input-row button:disabled{opacity:.6;cursor:not-allowed}
+.footer{text-align:center;color:#6d7ea3;font-size:12px;margin:22px}
+.pill{display:inline-block;background:#1a5cff22;color:#8ab4ff;border:1px solid #2b3a68;padding:2px 8px;border-radius:20px;font-size:11px;margin-left:6px}
+details summary{cursor:pointer;color:#8ab4ff;font-size:12.5px;margin-top:6px}
 </style>
 </head>
 <body>
 <div class="header">
   <h1>📈 UZEX AI Agent</h1>
-  <p>500 000 ta bitim (2022-2026) bo'yicha Text-to-SQL — har javobda SQL va hisob-kitob bilan</p>
-  <p style="font-size:13px;color:#8af">O'zbek va Rus tillarini tushunadi • Anti-hallucination • 90 sekunddan kam (odatda 2-3 sek)</p>
+  <p>500 000 ta birja bitimi (2022–2026) • Text-to-SQL • har javobda SQL va hisob-kitob</p>
+  <p>O'zbek va rus tilida • ma'lumot bo'lmasa to'qimaydi • ro'yxatdan o'tish kerak emas</p>
 </div>
 <div class="container">
   <div class="card">
-    <h3 style="margin:0 0 8px">💡 Savol namunalari (bosish bilan yuboriladi)</h3>
+    <h3>💡 Savol namunalari — bosing va yuboriladi</h3>
     <div class="examples">
-      <button onclick="ask('2024 yilda eng koʻp bitim qilgan broker kim?')">🏆 Top broker 2024</button>
+      <button onclick="ask('2024 yilda eng ko‘p bitim qilgan broker kim?')">🏆 Top broker 2024</button>
       <button onclick="ask('BK001 brokeri 2025 yilda nechta bitimda ishtirok etgan?')">BK001 2025</button>
-      <button onclick="ask('Экспортные сделки в 2024 году сумма в сумах?')">💵 Eksport 2024</button>
-      <button onclick="ask('Sement boʻyicha eng qimmat bitim qaysi 2023 yilda?')">🏗 Sement 2023</button>
-      <button onclick="ask('STIR 921912462 boʻyicha jami savdo qancha?')">STIR misol</button>
+      <button onclick="ask('Экспортные сделки в 2024 году количество и сумма в сумах?')">💵 Экспорт 2024</button>
+      <button onclick="ask('Sement bo‘yicha eng qimmat bitim qaysi 2023 yilda?')">🏗 Sement 2023</button>
+      <button onclick="ask('STIR 921912462 bo‘yicha jami savdo qancha?')">🔎 STIR</button>
+      <button onclick="ask('Paxta yog‘i 2025 yilda eng arzon bitim qaysi?')">🌱 Paxta yog'i</button>
+      <button onclick="ask('2025 yilda nechta Forvard shartnoma bo‘lgan?')">📄 Forvard 2025</button>
+      <button onclick="ask('Kosmik kema savdosi bo‘yicha ma\'lumot bormi?')">🚫 Yo'q ma'lumot testi</button>
+      <button onclick="ask('Сколько сделок по ИНН 999971754 в 2024 году?')">🇷🇺 ИНН 2024</button>
     </div>
   </div>
   <div class="card">
     <div id="chat" class="chat">
-      <div class="msg bot">👋 Salom! Men UZEX birja ma'lumotlari bo'yicha AI yordamchiman. Savol bering.</div>
+      <div class="msg bot">👋 Salom! UZEX birjasi bo'yicha savolingizni yozing (o'zbek yoki rus tilida).<br>Javob har doim bazadan olinadi — topilmasa, to'qimayman.</div>
     </div>
     <div class="input-row">
-      <input id="q" placeholder="Savol yozing... (uz yoki ru)" onkeydown="if(event.key==='Enter') send()">
-      <button onclick="send()">Yuborish ➤</button>
+      <input id="q" placeholder="Savol yozing... (uz / ru)" onkeydown="if(event.key==='Enter') send()">
+      <button id="send" onclick="send()">Yuborish ➤</button>
     </div>
+  </div>
+  <div class="card" style="font-size:13px;color:#9fb0d0">
+    <b style="color:#c7d3f0">Nega javobga ishonish mumkin?</b>
+    <div style="margin-top:6px">Har bir javob ostida <b>tekshirilgan SQL</b> va hisob-kitob formulasi ko'rsatiladi.
+    Agar baza bo'sh natija qaytarsa, agent raqam to'qimaydi — "ma'lumot topilmadi" deb aytadi va
+    mavjud bo'lsa <i>shunga yaqin</i> natijalarni alohida belgi bilan ko'rsatadi.</div>
+    <div class="footer">Muddat: 2022-01-03 — 2026-10-30 · Manba: deals, contracts, participants, brokers, usd_rates</div>
   </div>
 </div>
 <script>
-const chat=document.getElementById('chat');
-const input=document.getElementById('q');
-function addMsg(text, cls){
-  const d=document.createElement('div');
-  d.className='msg '+cls;
-  d.innerHTML=text.replace(/\n/g,'<br>');
-  chat.appendChild(d);
-  chat.scrollTop=chat.scrollHeight;
+const chat = document.getElementById('chat');
+const input = document.getElementById('q');
+const sendBtn = document.getElementById('send');
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderAnswer(text){
+  // Kod bloklarini ajratamiz
+  const blocks = [];
+  let t = text.replace(/```sql([\s\S]*?)```/g, (m, code) => {
+    blocks.push(code.trim());
+    return '\u0000SQL' + (blocks.length - 1) + '\u0000';
+  });
+  t = esc(t);
+  // Markdown jadval
+  t = t.replace(/^\|(.+)\|\s*$/gm, (line) => line);
+  const lines = t.split('\n');
+  let out = [], table = [];
+  const flush = () => {
+    if (table.length >= 2) {
+      let html = '<table>';
+      table.forEach((row, i) => {
+        if (/^\|[\s\-|]+\|$/.test(row.trim())) return;
+        const cells = row.replace(/^\||\|$/g,'').split('|').map(c => c.trim());
+        const tag = i === 0 ? 'th' : 'td';
+        html += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+      });
+      html += '</table>';
+      out.push(html);
+    } else {
+      out.push(...table);
+    }
+    table = [];
+  };
+  for (const line of lines) {
+    if (/^\s*\|.*\|\s*$/.test(line)) table.push(line);
+    else { flush(); out.push(line); }
+  }
+  flush();
+  t = out.join('\n');
+  // Sarlavhalarni rangli qilish
+  t = t.replace(/^(✅[^\n]*)/gm, '<span class="ok">$1</span>')
+       .replace(/^(⚠️[^\n]*)/gm, '<span class="warn">$1</span>')
+       .replace(/^(❌[^\n]*)/gm, '<span class="err">$1</span>')
+       .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  // SQL bloklarini qaytarish
+  t = t.replace(/\u0000SQL(\d+)\u0000/g, (m, i) =>
+    `<details><summary>SQL so'rovni ko'rish</summary><pre>${esc(blocks[+i])}</pre></details>`);
+  return t;
 }
+
+function addMsg(text, cls, html){
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  if (html) d.innerHTML = text; else d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
 async function send(){
-  const q=input.value.trim();
-  if(!q) return;
-  addMsg(q,'user');
-  input.value='';
-  addMsg('⏳ Qidirilmoqda...','bot');
-  try{
-    const res=await fetch('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
-    const data=await res.json();
-    chat.lastChild.remove();
-    let html=data.answer.replace(/```sql([\s\S]*?)```/g,'<pre class="sql">$1</pre>');
-    addMsg(html.replace(/\n/g,'<br>'),'bot');
-  }catch(e){
-    chat.lastChild.remove();
-    addMsg('⚠️ Xato: '+e.message,'bot');
+  const q = input.value.trim();
+  if (!q) return;
+  addMsg(q, 'user');
+  input.value = '';
+  sendBtn.disabled = true;
+  const wait = addMsg('⏳ Qidirilmoqda...', 'bot');
+  const started = Date.now();
+  try {
+    const res = await fetch('/api/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q})
+    });
+    const data = await res.json();
+    wait.remove();
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    addMsg(renderAnswer(data.answer || '(bo\'sh javob)') + `<div style="margin-top:8px;color:#6d7ea3;font-size:11.5px">⏱ ${secs} s · ${data.elapsed_ms || '—'} ms · baza javobi</div>`, 'bot', true);
+  } catch (e) {
+    wait.remove();
+    addMsg('⚠️ Xato: ' + e.message + '\nInternetni tekshiring yoki qayta urinib ko\'ring.', 'bot');
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
   }
 }
-function ask(t){ input.value=t; send(); }
+function ask(t){ input.value = t; send(); }
+input.focus();
 </script>
 </body>
 </html>
