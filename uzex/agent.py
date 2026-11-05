@@ -487,14 +487,24 @@ async def answer(question: str, user_id=None):
     if lang not in ("uz", "ru"):
         lang = "uz"
 
+    # ⛔ Anti-hallucination, 0-qadam (Gemini'dan OLDIN, ~10 ms):
+    # savoldagi tovar/mavzu bazada umuman yo'q bo'lsa model chaqirilmaydi.
+    # Ilgari bu tekshiruv Gemini'dan keyin edi — rad javobi 16 s kutar edi.
+    try:
+        from .heuristic import unknown_product
+        if unknown_product(question):
+            return _unknown_goods(lang)
+    except Exception:
+        pass
+
     gen = await generate_sql(question)
     sql = (gen.get("sql") or "").strip()
     explanation = gen.get("explanation") or ""
     lang = gen.get("language") if gen.get("language") in ("uz", "ru") else lang
     needs_data = gen.get("needs_data", True)
 
-    # ⛔ Anti-hallucination: savoldagi tovar/mavzu bazada umuman yo'q bo'lsa,
-    # Gemini SQL tuzsa ham ishlatmaymiz (u "umumiy statistika" qaytarib yuborardi).
+    # Zaxira tekshiruv (generate_sql ichida ham bor) — model SQL tuzgan bo'lsa ham
+    # bazada yo'q mavzu bo'yicha javob berilmasin.
     try:
         from .heuristic import unknown_product
         if unknown_product(question):
