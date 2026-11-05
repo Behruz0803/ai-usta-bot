@@ -99,6 +99,14 @@ def _handle(method, path, query, body):
             return _json(500, {"error": str(e)[:300]})
 
     if path == "/api/query":
+        if method == "GET":
+            # Brauzer/curl bilan tez tekshirish uchun: /api/query?q=...
+            from urllib.parse import parse_qs
+            q = (parse_qs(query or "").get("q") or [""])[0].strip()[:500]
+            if not q:
+                return _json(400, {"error": "q parametri kerak", "misol": "/api/query?q=Sement narxi 2024"})
+            ans, ms = _run_question(q)
+            return _json(200, {"question": q, "answer": ans, "elapsed_ms": ms})
         if method != "POST":
             return 405, "text/plain; charset=utf-8", b"method not allowed"
         try:
