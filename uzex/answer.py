@@ -185,6 +185,135 @@ def _footer(explanation, lang, product=None):
     return "\n\n" + "\n\n".join(parts)
 
 
+
+# ── Hisob-kitob asosi: savolga xos tushuntirish ────────────────────
+FILTER_LABELS = {
+    "period":   {"uz": "davr", "ru": "период"},
+    "region":   {"uz": "hudud", "ru": "регион"},
+    "product":  {"uz": "tovar", "ru": "товар"},
+    "broker":   {"uz": "broker", "ru": "брокер"},
+    "inn":      {"uz": "STIR", "ru": "ИНН"},
+    "status":   {"uz": "holat", "ru": "статус"},
+    "form":     {"uz": "shartnoma shakli", "ru": "форма контракта"},
+    "type":     {"uz": "turi", "ru": "тип"},
+}
+STATUS_EXCLUDED = {"uz": "bekor qilinganlar chiqarilgan", "ru": "аннулированные исключены"}
+
+
+def _filters_from_sql(sql):
+    """SQL dagi filtr va agregatlarni kalit-qiymat ko'rinishida ajratadi."""
+    s = sql or ""
+    out = []
+
+    m = re.search(r"BETWEEN\s+'(\d{4}-\d{2}-\d{2})'\s+AND\s+'(\d{4}-\d{2}-\d{2})'", s, re.I)
+    if m:
+        y1, y2 = m.group(1)[:4], m.group(2)[:4]
+        out.append(("period", y1 if y1 == y2 else f"{y1}–{y2}"))
+    elif re.search(r"strftime\('%Y'", s):
+        m2 = re.search(r"strftime\('%Y'[^)]*\)\s*=\s*'(\d{4})'", s)
+        if m2:
+            out.append(("period", m2.group(1)))
+
+    m = re.search(r"ufold\(d\.region\)\s+LIKE\s+ufold\('%([^%']+)%'\)", s, re.I)
+    if m:
+        out.append(("region", m.group(1)))
+
+    m = re.search(r"ufold\([\w.]+product_name\)\s+LIKE\s+ufold\('%([^%']+)%'\)", s, re.I)
+    if m:
+        out.append(("product", m.group(1)))
+
+    m = re.search(r"'(BK\d{1,3})'", s)
+    if m:
+        out.append(("broker", m.group(1)))
+
+    m = re.search(r"'(\d{9})'", s)
+    if m:
+        out.append(("inn", m.group(1)))
+
+    if "Аннулирован" in s:
+        out.append(("status", None))
+
+    m = re.search(r"contract_form\s*=\s*'([^']+)'", s)
+    if m:
+        out.append(("form", m.group(1)))
+    m = re.search(r"contract_type\s*=\s*'([^']+)'", s)
+    if m:
+        out.append(("type", m.group(1)))
+    return out
+
+
+def _aggs_from_sql(sql, lang):
+    s = sql or ""
+    uz = lang != "ru"
+    out = []
+    if re.search(r"COUNT\(\*|COUNT\(DISTINCT", s, re.I):
+        out.append("COUNT — " + ("yozuvlar soni" if uz else "количество записей"))
+    if re.search(r"SUM\(", s, re.I):
+        out.append("SUM — " + ("so'mdagi yig'indi" if uz else "сумма в сумах"))
+    if re.search(r"AVG\(", s, re.I):
+        out.append("AVG — " + ("o'rtacha qiymat" if uz else "среднее значение"))
+    if re.search(r"MIN\(|MAX\(", s, re.I):
+        out.append("MIN/MAX — " + ("eng kichik/katta" if uz else "минимум/максимум"))
+    m = re.search(r"GROUP\s+BY\s+([\w.,\s]+?)(?:ORDER|LIMIT|HAVING|;|$)", s, re.I)
+    if m:
+        out.append(("GROUP BY — guruhlash: " if uz else "GROUP BY — группировка: ") + m.group(1).strip()[:80])
+    m = re.search(r"ORDER\s+BY\s+([\w.]+)\s*(DESC|ASC)?", s, re.I)
+    if m:
+        desc = (m.group(2) or "").upper() == "DESC"
+        out.append(("tartib: " if uz else "сортировка: ") + m.group(1) +
+                   (" (kamayish)" if uz and desc else
+                    " (o'sish)" if uz else
+                    " (убывание)" if desc else " (возрастание)"))
+    if re.search(r"\bLIMIT\s+\d+", s, re.I):
+        out.append("LIMIT — " + ("faqat birinchi qatorlar" if uz else "только первые строки"))
+    return out
+
+
+def calc_basis(sql, rows, columns, lang):
+    """Har javob uchun: qanday filtrlar, qaysi formula, qanday tekshirish."""
+    uz = lang != "ru"
+    filters = _filters_from_sql(sql)
+    aggs = _aggs_from_sql(sql, lang)
+    lines = []
+
+    if filters:
+        parts = []
+        for key, val in filters:
+            label = FILTER_LABELS.get(key, {}).get(lang) or FILTER_LABELS.get(key, {}).get("uz") or key
+            if key == "status":
+                parts.append(f"{label}: {STATUS_EXCLUDED[lang if not uz else 'uz']}")
+            else:
+                parts.append(f"{label}: {val}")
+        lines.append(("Qo'llangan filtrlar" if uz else "Применённые фильтры") + ": " + " · ".join(parts))
+    if aggs:
+        lines.append(("Formula/agregat" if uz else "Формула/агрегат") + ": " + "; ".join(aggs))
+
+    if rows:
+        first = rows[0]
+        nums = [(c, first[c]) for c in (columns or []) if isinstance(first[c], (int, float))]
+        if nums:
+            c, v = nums[0]
+            lines.append(
+                (f"Tekshiruv: «{c}» = {fmt_num(v)} — qiymat to'g'ridan-to'g'ri bazadan "
+                 f"(SQL natijasi), model yozmagan.") if uz else
+                (f"Проверка: «{c}» = {fmt_num(v)} — значение взято напрямую из базы "
+                 f"(результат SQL), модель его не писала."))
+
+    if not lines:
+        return ""
+    head = "Hisob-kitob asosi" if uz else "Основа расчёта"
+    return "\n\n**" + head + ":**\n" + "\n".join("- " + l for l in lines)
+
+
+def source_note(lang):
+    uz = lang != "ru"
+    return ("\n\n**Manba:** `deals` (500 000 bitim, 2022-01-03 … 2026-10-30) + `contracts` "
+            "+ `usd_rates` + `participants` + `brokers`. Summalar so'mga o'girilgan."
+            if uz else
+            "\n\n**Источник:** `deals` (500 000 сделок, 2022-01-03 … 2026-10-30) + `contracts` "
+            "+ `usd_rates` + `participants` + `brokers`. Суммы переведены в сумы.")
+
+
 # ── Asosiy formatlash ──────────────────────────────────────────────
 def format_no_data(sql, explanation, lang, elapsed_ms, table_count=None, hint=None):
     """Aniq mos ma'lumot yo'q. Yaqin natijalar bo'lsa, ular alohida ko'rsatiladi."""
@@ -237,6 +366,7 @@ def format_result(sql, rows, columns, rowcount, explanation, lang, elapsed_ms,
     if hint:
         out += f"\n\n{hint}"
     out += _footer(explanation, lang)
+    out += calc_basis(sql, rows, columns, lang)
     out += zero_note
     out += _sql_block(sql, lang)
     if truncated:
