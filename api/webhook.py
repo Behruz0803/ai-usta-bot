@@ -526,6 +526,11 @@ def app(environ, start_response):
     start_response(_STATUS_TEXT.get(status, f"{status} Unknown"), [
         ("Content-Type", content_type),
         ("Content-Length", str(len(payload))),
+        # Vercel CDN eski javobni ushlab turmasin (deploy almashganda
+        # "/" bir muncha vaqt eski webhook JSON'ini qaytargan edi).
+        ("Cache-Control", "no-store, max-age=0, must-revalidate"),
+        ("CDN-Cache-Control", "no-store"),
+        ("Vercel-CDN-Cache-Control", "no-store"),
     ])
     return [payload]
 
@@ -548,6 +553,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store, max-age=0, must-revalidate")
         self.end_headers()
         self.wfile.write(payload)
 
