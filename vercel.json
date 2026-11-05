@@ -13,23 +13,23 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/api/webhook"
+      "destination": "/api/webhook?__web=/"
     },
     {
       "source": "/chat",
-      "destination": "/api/webhook"
+      "destination": "/api/webhook?__web=/chat"
     },
     {
       "source": "/api/query",
-      "destination": "/api/webhook"
+      "destination": "/api/webhook?__web=/api/query"
     },
     {
       "source": "/api/health",
-      "destination": "/api/webhook"
+      "destination": "/api/webhook?__web=/api/health"
     },
     {
       "source": "/api/stats",
-      "destination": "/api/webhook"
+      "destination": "/api/webhook?__web=/api/stats"
     }
   ]
 }

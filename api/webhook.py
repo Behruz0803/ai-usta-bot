@@ -372,6 +372,17 @@ def _is_web_path(path):
 
 
 def _handle(method, path, query, headers, raw_body, web_ctx=None):
+    # Vercel rewrite manzilni /api/webhook ga almashtiradi va asl yo'lni
+    # yo'qotadi. Shuning uchun rewrite query'ga `__web=<asl yo'l>` qo'shadi.
+    try:
+        from urllib.parse import parse_qs as _pq0
+        _m = _pq0(query or "").get("__web")
+        if _m:
+            path = _m[0] or "/"
+            query = "&".join(
+                f"{k}={v[0]}" for k, v in _pq0(query or "").items() if k != "__web")
+    except Exception:
+        pass
     if _is_usta_path(path):
         return _handle_usta(method, path, query, headers, raw_body)
     if _is_web_path(path):
