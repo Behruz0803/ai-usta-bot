@@ -12,23 +12,45 @@
     "api/index.py": {
       "maxDuration": 300,
       "memory": 1024
+    },
+    "api/query.py": {
+      "maxDuration": 300,
+      "memory": 1024
     }
   },
   "rewrites": [
     {
       "source": "/",
-      "destination": "/api/index"
+      "has": [
+        {
+          "type": "query",
+          "key": "info"
+        }
+      ],
+      "destination": "/api/webhook"
     },
     {
-      "source": "/api/query",
-      "destination": "/api/index"
+      "source": "/",
+      "has": [
+        {
+          "type": "query",
+          "key": "setup"
+        }
+      ],
+      "destination": "/api/webhook"
     },
     {
-      "source": "/api/health",
-      "destination": "/api/index"
+      "source": "/",
+      "has": [
+        {
+          "type": "query",
+          "key": "db"
+        }
+      ],
+      "destination": "/api/webhook"
     },
     {
-      "source": "/api/stats",
+      "source": "/",
       "destination": "/api/index"
     }
   ]
