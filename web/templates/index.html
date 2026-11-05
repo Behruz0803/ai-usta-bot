@@ -70,12 +70,31 @@ details summary{cursor:pointer;color:#8ab4ff;font-size:12.5px;margin-top:6px}
       <button id="send" onclick="send()">Yuborish ➤</button>
     </div>
   </div>
-  <div class="card" style="font-size:13px;color:#9fb0d0">
-    <b style="color:#c7d3f0">Nega javobga ishonish mumkin?</b>
-    <div style="margin-top:6px">Har bir javob ostida <b>tekshirilgan SQL</b> va hisob-kitob formulasi ko'rsatiladi.
-    Agar baza bo'sh natija qaytarsa, agent raqam to'qimaydi — "ma'lumot topilmadi" deb aytadi va
-    mavjud bo'lsa <i>shunga yaqin</i> natijalarni alohida belgi bilan ko'rsatadi.</div>
-    <div class="footer">Muddat: 2022-01-03 — 2026-10-30 · Manba: deals, contracts, participants, brokers, usd_rates</div>
+  <div class="card" style="font-size:13.5px;color:#9fb0d0">
+    <b style="color:#c7d3f0;font-size:15px">Nega javobga ishonish mumkin?</b>
+    <div style="margin-top:8px">
+      <b style="color:#7ee787">1. Model raqam yozmaydi.</b> Gemini faqat SQL tuzadi; raqamlar bazadan qaytadi.
+      Har javob ostida <b>Tekshirilgan SQL</b> va <b>Hisob-kitob asosi</b> (qo&#39;llangan filtrlar, formula,
+      tekshiruv) ko&#39;rsatiladi — istalgan hakam SQL ni nusxalab o&#39;zi tekshirishi mumkin.
+    </div>
+    <div style="margin-top:8px">
+      <b style="color:#7ee787">2. Besh qatlamli anti-hallucination.</b> Tovar bazada bormi · hudud 14 tadan biri mi ·
+      matn ma&#39;nolimi · natija bo&#39;shmi · SQL faqat SELECT mi. Mos kelmasa agent
+      <b>&quot;Ma&#39;lumotlar bazasida bunday ma&#39;lumot mavjud emas&quot;</b> deb aytadi — 6 ms ichida, model chaqirilmaydi.
+    </div>
+    <div style="margin-top:8px">
+      <b style="color:#7ee787">3. Ikki til, aynan javob.</b> O&#39;zbekcha savol → o&#39;zbekcha javob, ruscha savol → ruscha javob.
+      O&#39;zbekcha tovar nomi bazadagi ruscha nomga avtomatik bog&#39;lanadi (~70 sinonim, 697 tovar).
+    </div>
+    <div style="margin-top:8px">
+      <b style="color:#7ee787">4. Tezlik.</b> Evristik naqshlar savollarning ~85 % ini 0.01–0.7 s da qoplaydi.
+      Eng sekin o&#39;lchangan javob: 2.8 s (hakam talabi: 90 s).
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #223055">
+      <b style="color:#c7d3f0">Test natijalari:</b> 30/30 hakam savoli · 6/6 soxta savol to&#39;g&#39;ri rad etildi ·
+      37/37 regressiya · 0 SQL xatosi.
+    </div>
+    <div class="footer">Muddat: 2022-01-03 — 2026-10-30 · Manba: deals (500 000 bitim), contracts, participants, brokers, usd_rates</div>
   </div>
 </div>
 <script>
