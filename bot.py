@@ -13,8 +13,8 @@ from telegram import (
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    TypeHandler, filters, ContextTypes
+    Application, ApplicationHandlerStop, CommandHandler, MessageHandler,
+    CallbackQueryHandler, TypeHandler, filters, ContextTypes
 )
 from user_store import save_user
 from ai_engine import (
@@ -118,9 +118,17 @@ def in_usta_mode() -> bool:
 def in_uzex_mode() -> bool:
     return not in_usta_mode()
 
+def usta_is_paused() -> bool:
+    """AI Usta vaqtinchalik to'xtatilganmi. UZEX botiga ta'sir qilmaydi."""
+    raw = os.getenv("USTA_PAUSED", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
 async def bind_request_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Qaysi bot update oldi — shu botning rejimi. Ikkinchisiga o'tmaydi."""
     bot_id = context.bot.id if context.bot else 0
+    is_usta = (bot_id == USTA_BOT_ID) or (bot_id == 0 and IS_USTA)
+    if is_usta and usta_is_paused():
+        raise ApplicationHandlerStop
     request_mode.set("usta" if bot_id == USTA_BOT_ID else "uzex")
 
 def klaviatura():
@@ -965,6 +973,10 @@ def main():
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
         print("❌ TELEGRAM_TOKEN o'rnatilmagan! .env faylni tekshiring (.env.example ga qarang).")
+        return
+    token_bot_id = token.split(":", 1)[0].strip()
+    if (IS_USTA or token_bot_id == str(USTA_BOT_ID)) and usta_is_paused():
+        print("⏸ AI Usta bot vaqtinchalik to'xtatilgan (USTA_PAUSED=1). Qayta yoqish uchun USTA_PAUSED=0 qiling.")
         return
     print(f"🤖 BOT_MODE={BOT_MODE} kutilgan=@{EXPECTED_BOT_USERNAME}")
     if UZEX_ENABLED:

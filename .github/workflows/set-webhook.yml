@@ -1,12 +1,18 @@
 name: Telegram webhook
 
 on:
+  push:
+    branches: [arena/2f66282f-ai-usta-bot]
+    paths:
+      - "api/webhook.py"
+      - "api/usta.py"
+      - ".github/workflows/set-webhook.yml"
   workflow_dispatch:
     inputs:
       base_url:
         description: Botning public URL manzili
         required: false
-        default: https://ai-usta-bot-mbm15.vercel.app
+        default: https://ai-usta-bot-omega.vercel.app
 
 permissions:
   contents: read
@@ -15,19 +21,29 @@ jobs:
   activate:
     runs-on: ubuntu-latest
     steps:
-      - name: Ask Vercel to set the Telegram webhook and warm the database
+      - name: Verify UZEX and pause AI Usta webhook
         env:
-          BASE_URL: ${{ inputs.base_url }}
+          BASE_URL: ${{ inputs.base_url || 'https://ai-usta-bot-omega.vercel.app' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -u
-          echo "health:"
-          curl -sS -m 30 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/webhook" || true
-          echo "setup webhook:"
-          curl -sS -m 60 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/webhook?setup=1" || true
-          echo
-          echo "warmup database:"
-          curl -sS -m 70 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/webhook?db=1" || true
-          echo
-          echo "webhook info:"
+          echo "Waiting for production deploy to report AI Usta paused..."
+          for i in $(seq 1 18); do
+            resp=$(curl -sS -m 20 "${BASE_URL}/api/usta?pause=1&info=1" || true)
+            echo "attempt $i: ${resp}"
+            if echo "${resp}" | grep -q '"status": "paused"'; then
+              echo "AI Usta paused and webhook detached!"
+              break
+            fi
+            sleep 5
+          done
+          echo "UZEX web health:"
+          curl -sS -m 30 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/health" || true
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "setup UZEX webhook:"
+            curl -sS -m 60 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/webhook?setup=1" || true
+            echo
+          fi
+          echo "UZEX webhook info (must stay active):"
           curl -sS -m 40 -w "\nhttp=%{http_code}\n" "${BASE_URL}/api/webhook?info=1" || true
           echo

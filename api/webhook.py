@@ -250,8 +250,96 @@ async def _probe_gemini():
     return rows
 
 
+_usta_webhook_detached = False
+
+
+def _detach_usta_webhook(force=False):
+    """Faqat AI Usta (8731876262) webhookini Telegramdan o'chiradi. UZEXga tegmaydi."""
+    global _usta_webhook_detached
+    if _usta_webhook_detached and not force:
+        return True
+    token = _usta_token()
+    if not token or token.split(":", 1)[0] != str(bot_module.USTA_BOT_ID):
+        return False
+    try:
+        import httpx
+        res = httpx.post(
+            f"https://api.telegram.org/bot{token}/deleteWebhook",
+            json={"drop_pending_updates": True},
+            timeout=15.0,
+        )
+        ok = res.status_code == 200 and bool(res.json().get("ok"))
+        if ok:
+            _usta_webhook_detached = True
+        return ok
+    except Exception:
+        logger.exception("usta webhookni o'chirishda xato")
+        return False
+
+
+def _usta_paused_response(method, query):
+    """AI Usta vaqtinchalik to'xtatilgan holat uchun javob."""
+    if method == "GET":
+        qs = parse_qs(query or "")
+        detached = _detach_usta_webhook(force=True)
+        if "setup" in qs:
+            return 200, "application/json", json.dumps({
+                "status": "paused",
+                "paused": True,
+                "bot_id": bot_module.USTA_BOT_ID,
+                "mode": "usta",
+                "webhook_set": False,
+                "webhook_deleted": detached,
+                "message": "AI Usta vaqtinchalik to'xtatilgan (USTA_PAUSED=1). Yoqish uchun USTA_PAUSED=0 qiling.",
+            }, ensure_ascii=False)
+        if "info" in qs:
+            webhook_url = ""
+            pending = 0
+            bot_username = None
+            token = _usta_token()
+            if token and token.split(":", 1)[0] == str(bot_module.USTA_BOT_ID):
+                try:
+                    import httpx
+                    r_info = httpx.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=15.0).json()
+                    r_me = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15.0).json()
+                    info_res = r_info.get("result") or {}
+                    me_res = r_me.get("result") or {}
+                    webhook_url = info_res.get("url", "")
+                    pending = info_res.get("pending_update_count", 0)
+                    if me_res.get("username"):
+                        bot_username = f"@{me_res['username']}"
+                except Exception:
+                    logger.exception("usta info olishda xato")
+            return 200, "application/json", json.dumps({
+                "status": "paused",
+                "paused": True,
+                "bot": bot_username,
+                "bot_id": bot_module.USTA_BOT_ID,
+                "mode": "usta",
+                "webhook_deleted": detached,
+                "webhook_url": webhook_url,
+                "pending_updates": pending,
+            }, ensure_ascii=False)
+        return 200, "application/json", json.dumps({
+            "status": "paused",
+            "paused": True,
+            "bot_id": bot_module.USTA_BOT_ID,
+            "mode": "usta",
+            "webhook_deleted": detached,
+            "message": "AI Usta bot vaqtinchalik to'xtatilgan (USTA_PAUSED=1).",
+        }, ensure_ascii=False)
+
+    if method == "POST":
+        _detach_usta_webhook(force=False)
+        return 200, "text/plain", "paused"
+
+    return 405, "text/plain", "method not allowed"
+
+
 def _handle_usta(method, path, query, headers, raw_body):
     """Faqat @ai_usta_bot. UZEX tokeni va webhooki bu yerga kirmaydi."""
+    if bot_module.usta_is_paused():
+        return _usta_paused_response(method, query)
     if method == "GET":
         qs = parse_qs(query or "")
         try:
